@@ -368,22 +368,52 @@ async function updateHintsPosition(): Promise<void> {
 
 function buildWordHTML(word: string, wordIndex: number): string {
   let newlineafter = false;
-  let retval = `<div class='word' data-wordindex='${wordIndex}'>`;
+  const wordHasDiacritics = hasArabicDiacritics(word);
+  const wordClass = wordHasDiacritics ? "word arabic-word" : "word";
+  let retval = `<div class='${wordClass}' data-wordindex='${wordIndex}'>`;
 
   const funbox = findSingleActiveFunboxWithFunction("getWordHtml");
-  const chars = Strings.splitIntoCharacters(word);
-  for (const char of chars) {
-    if (funbox) {
-      retval += funbox.functions.getWordHtml(char, true);
-    } else if (char === "\t") {
-      retval += `<letter class='tabChar'><i class="fas fa-long-arrow-alt-right fa-fw"></i></letter>`;
-    } else if (char === "\n") {
-      newlineafter = true;
-      retval += `<letter class='nlChar'><i class="fas fa-level-down-alt fa-rotate-90 fa-fw"></i></letter>`;
-    } else {
-      retval += "<letter>" + char + "</letter>";
+
+  if (wordHasDiacritics) {
+    // For Arabic words with diacritics: keep each character separate for caret positioning
+    const chars = Strings.splitIntoCharacters(word);
+    for (const char of chars) {
+      if (char === "\t") {
+        retval += `<letter class='tabChar'><i class="fas fa-long-arrow-alt-right fa-fw"></i></letter>`;
+      } else if (char === "\n") {
+        newlineafter = true;
+        retval += `<letter class='nlChar'><i class="fas fa-level-down-alt fa-rotate-90 fa-fw"></i></letter>`;
+      } else {
+        retval += "<letter>" + char + "</letter>";
+      }
+    }
+
+    // Add foreground layer with only base letters (no diacritics)
+    let foreground = '<span class="word-foreground">';
+    const units = splitIntoArabicUnits(word);
+    for (const unit of units) {
+      if (unit.base === "\t" || unit.base === "\n") continue;
+      foreground += `<span class="letter-untyped">${unit.base}</span>`;
+    }
+    foreground += "</span>";
+    retval += foreground;
+  } else {
+    // Standard character-based rendering for non-Arabic words
+    const chars = Strings.splitIntoCharacters(word);
+    for (const char of chars) {
+      if (funbox) {
+        retval += funbox.functions.getWordHtml(char, true);
+      } else if (char === "\t") {
+        retval += `<letter class='tabChar'><i class="fas fa-long-arrow-alt-right fa-fw"></i></letter>`;
+      } else if (char === "\n") {
+        newlineafter = true;
+        retval += `<letter class='nlChar'><i class="fas fa-level-down-alt fa-rotate-90 fa-fw"></i></letter>`;
+      } else {
+        retval += "<letter>" + char + "</letter>";
+      }
     }
   }
+
   retval += "</div>";
   if (newlineafter) {
     retval +=
@@ -758,7 +788,76 @@ export async function updateWordLetters({
         for (const char of compositionData) {
           ret += `<letter class="dead">${char}</letter>`;
         }
+      } else if (currentWord && hasArabicDiacritics(currentWord)) {
+        // Arabic word with diacritics: character-by-character for caret, unit-based for foreground
+        const inputChars = Strings.splitIntoCharacters(input);
+        const expectedChars = Strings.splitIntoCharacters(currentWord);
+
+        // Build background letter elements (character by character)
+        // Only diacritics need highlighting classes - base letters are covered by foreground
+        for (let i = 0; i < inputChars.length; i++) {
+          const inputChar = inputChars[i] as string;
+          const expectedChar = expectedChars[i];
+
+          if (expectedChar === undefined) {
+            // Extra character
+            let letter = inputChar;
+            if (letter === " ") letter = "_";
+            ret += `<letter class="incorrect extra">${letter}</letter>`;
+          } else if (isArabicDiacritic(expectedChar)) {
+            // Diacritic: apply highlighting class (this is visible)
+            const charCorrect = inputChar === expectedChar;
+            const letterClass = charCorrect ? "correct" : "incorrect";
+            ret += `<letter class="${letterClass}">${expectedChar}</letter>`;
+          } else {
+            // Base letter: no highlighting class (covered by foreground)
+            ret += `<letter>${expectedChar}</letter>`;
+          }
+        }
+
+        // Add remaining untyped characters
+        for (let i = inputChars.length; i < expectedChars.length; i++) {
+          const char = expectedChars[i];
+          ret += `<letter>${char}</letter>`;
+        }
+
+        // Build foreground with only base letters (for visual layering)
+        // Track character position to know which unit we've actually reached
+        const expectedUnits = splitIntoArabicUnits(currentWord);
+        const inputLength = inputChars.length;
+
+        let foreground = '<span class="word-foreground">';
+        let charIndex = 0;
+        for (const unit of expectedUnits) {
+          if (unit.base === "\t" || unit.base === "\n") {
+            charIndex += unit.full.length;
+            continue;
+          }
+
+          const unitStartIndex = charIndex;
+          charIndex += unit.full.length;
+
+          let spanClass: string;
+
+          if (inputLength <= unitStartIndex) {
+            // Haven't reached this unit's base letter yet
+            spanClass = "letter-untyped";
+          } else {
+            // Have typed at least the base position of this unit
+            // Check if the character at base position matches expected base
+            const typedAtBase = inputChars[unitStartIndex];
+            const baseCorrect = typedAtBase === unit.base;
+            spanClass = baseCorrect ? "letter-correct" : "letter-incorrect";
+          }
+
+          foreground += `<span class="${spanClass}">${unit.base}</span>`;
+        }
+        foreground += "</span>";
+        ret += foreground;
+
+        wordAtIndex.addClass("arabic-word");
       } else {
+        // Standard character-based rendering for non-Arabic words
         const funbox = findSingleActiveFunboxWithFunction("getWordHtml");
 
         const inputChars = Strings.splitIntoCharacters(input);
@@ -852,6 +951,8 @@ export async function updateWordLetters({
             ret += `<letter>` + currentLetter + "</letter>";
           }
         }
+
+        wordAtIndex.removeClass("arabic-word");
       }
 
       wordAtIndex.setHtml(ret);
@@ -2083,3 +2184,54 @@ ConfigEvent.subscribe(({ key, newValue }) => {
     updateLiveStatsMargin();
   }
 });
+
+// Arabic diacritics helper
+const ARABIC_DIACRITIC_REGEX = /[\u064B-\u065F\u0670]/g;
+
+export function stripArabicDiacritics(text: string): string {
+  return text.replace(ARABIC_DIACRITIC_REGEX, "");
+}
+
+export function hasArabicDiacritics(text: string): boolean {
+  return ARABIC_DIACRITIC_REGEX.test(text);
+}
+
+// Check if a character is an Arabic diacritic
+function isArabicDiacritic(char: string): boolean {
+  return /^[\u064B-\u065F\u0670]$/.test(char);
+}
+
+// Split Arabic text into units: each unit = base letter + following diacritics
+export type ArabicUnit = {
+  base: string; // The base letter
+  diacritics: string; // The following diacritics (may be empty)
+  full: string; // base + diacritics combined
+};
+
+export function splitIntoArabicUnits(text: string): ArabicUnit[] {
+  const units: ArabicUnit[] = [];
+  const chars = Strings.splitIntoCharacters(text);
+
+  let i = 0;
+  while (i < chars.length) {
+    const base = chars[i];
+    if (base === undefined) break;
+
+    let diacritics = "";
+    i++;
+
+    // Collect all following diacritics
+    while (i < chars.length && isArabicDiacritic(chars[i] as string)) {
+      diacritics += chars[i];
+      i++;
+    }
+
+    units.push({
+      base,
+      diacritics,
+      full: base + diacritics,
+    });
+  }
+
+  return units;
+}
