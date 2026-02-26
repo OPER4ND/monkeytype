@@ -794,7 +794,7 @@ export async function updateWordLetters({
         const expectedChars = Strings.splitIntoCharacters(currentWord);
 
         // Build background letter elements (character by character)
-        // Only diacritics need highlighting classes - base letters are covered by foreground
+        // Base letters get diacritic's correctness class (since diacritics visually combine with base)
         for (let i = 0; i < inputChars.length; i++) {
           const inputChar = inputChars[i] as string;
           const expectedChar = expectedChars[i];
@@ -805,13 +805,26 @@ export async function updateWordLetters({
             if (letter === " ") letter = "_";
             ret += `<letter class="incorrect extra">${letter}</letter>`;
           } else if (isArabicDiacritic(expectedChar)) {
-            // Diacritic: apply highlighting class (this is visible)
-            const charCorrect = inputChar === expectedChar;
-            const letterClass = charCorrect ? "correct" : "incorrect";
-            ret += `<letter class="${letterClass}">${expectedChar}</letter>`;
-          } else {
-            // Base letter: no highlighting class (covered by foreground)
+            // Diacritic: no class needed (visually combines with preceding base letter)
             ret += `<letter>${expectedChar}</letter>`;
+          } else {
+            // Base letter: check if next char is a diacritic and apply its correctness
+            const nextExpected = expectedChars[i + 1];
+            const nextInput = inputChars[i + 1];
+
+            if (
+              nextExpected !== undefined &&
+              isArabicDiacritic(nextExpected) &&
+              nextInput !== undefined
+            ) {
+              // There's a diacritic after this base, and user has typed at that position
+              const diacriticCorrect = nextInput === nextExpected;
+              const letterClass = diacriticCorrect ? "correct" : "incorrect";
+              ret += `<letter class="${letterClass}">${expectedChar}</letter>`;
+            } else {
+              // No diacritic, or diacritic not yet typed
+              ret += `<letter>${expectedChar}</letter>`;
+            }
           }
         }
 
@@ -2186,10 +2199,13 @@ ConfigEvent.subscribe(({ key, newValue }) => {
 });
 
 // Arabic diacritics helper
-const ARABIC_DIACRITIC_REGEX = /[\u064B-\u065F\u0670]/g;
+// Global regex for replace operations
+const ARABIC_DIACRITIC_REGEX_GLOBAL = /[\u064B-\u065F\u0670]/g;
+// Non-global regex for test operations (global flag causes stateful behavior with .test())
+const ARABIC_DIACRITIC_REGEX = /[\u064B-\u065F\u0670]/;
 
 export function stripArabicDiacritics(text: string): string {
-  return text.replace(ARABIC_DIACRITIC_REGEX, "");
+  return text.replace(ARABIC_DIACRITIC_REGEX_GLOBAL, "");
 }
 
 export function hasArabicDiacritics(text: string): boolean {
