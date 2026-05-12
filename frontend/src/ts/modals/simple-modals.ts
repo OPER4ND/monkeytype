@@ -1,17 +1,14 @@
 import Ape from "../ape";
 import * as AccountController from "../auth";
 import * as DB from "../db";
-import { resetConfig, setConfig } from "../config";
-import * as Notifications from "../elements/notifications";
+import { resetConfig } from "../config/lifecycle";
+import { setConfig } from "../config/setters";
+import { showNoticeNotification } from "../states/notifications";
 import * as Settings from "../pages/settings";
 import * as ThemePicker from "../elements/settings/theme-picker";
-import * as CustomText from "../test/custom-text";
 import { FirebaseError } from "firebase/app";
-import {
-  isAuthenticated,
-  getAuthenticatedUser,
-  isAuthAvailable,
-} from "../firebase";
+import { getAuthenticatedUser, isAuthAvailable } from "../firebase";
+import { isAuthenticated } from "../states/core";
 import {
   EmailAuthProvider,
   User,
@@ -20,12 +17,9 @@ import {
   reauthenticateWithPopup,
   unlink,
 } from "firebase/auth";
-import {
-  createErrorMessage,
-  isDevEnvironment,
-  reloadAfter,
-} from "../utils/misc";
-import * as CustomTextState from "../states/custom-text-name";
+import { reloadAfter } from "../utils/misc";
+import { isDevEnvironment } from "../utils/env";
+import { createErrorMessage } from "../utils/error";
 import * as ThemeController from "../controllers/theme-controller";
 import * as AccountSettings from "../pages/account-settings";
 import {
@@ -33,20 +27,22 @@ import {
   PasswordInput,
   SimpleModal,
   TextInput,
-} from "../utils/simple-modal";
+} from "../elements/simple-modal";
 
 import { GenerateDataRequest } from "@monkeytype/contracts/dev";
 import {
+  CustomThemeNameSchema,
   PasswordSchema,
   UserEmailSchema,
   UserNameSchema,
 } from "@monkeytype/schemas/users";
-import { goToPage } from "../pages/leaderboards";
 import FileStorage from "../utils/file-storage";
 import { z } from "zod";
 import { remoteValidation } from "../utils/remote-validation";
 import { list, PopupKey, showPopup } from "./simple-modals-base";
-import { getTheme } from "../signals/theme";
+import { getTheme } from "../states/theme";
+import { normalizeName } from "../utils/strings";
+import { IsValidResponse } from "../types/validation";
 
 export { list, showPopup };
 export type { PopupKey };
@@ -54,13 +50,13 @@ export type { PopupKey };
 type AuthMethod = "password" | "github.com" | "google.com";
 
 type ReauthSuccess = {
-  status: 1;
+  status: "success";
   message: string;
   user: User;
 };
 
 type ReauthFailed = {
-  status: -1 | 0;
+  status: "error" | "notice";
   message: string;
 };
 
@@ -105,7 +101,7 @@ async function reauthenticate(
 ): Promise<ReauthSuccess | ReauthFailed> {
   if (!isAuthAvailable()) {
     return {
-      status: -1,
+      status: "error",
       message: "Authentication is not initialized",
     };
   }
@@ -113,7 +109,7 @@ async function reauthenticate(
   const user = getAuthenticatedUser();
   if (user === null) {
     return {
-      status: -1,
+      status: "error",
       message: "User is not signed in",
     };
   }
@@ -123,7 +119,7 @@ async function reauthenticate(
   try {
     if (authMethod === undefined) {
       return {
-        status: -1,
+        status: "error",
         message:
           "Failed to reauthenticate: there is no valid authentication present on the account.",
       };
@@ -132,7 +128,7 @@ async function reauthenticate(
     if (authMethod === "password") {
       if (options.password === undefined) {
         return {
-          status: -1,
+          status: "error",
           message: "Failed to reauthenticate using password: password missing.",
         };
       }
@@ -150,7 +146,7 @@ async function reauthenticate(
     }
 
     return {
-      status: 1,
+      status: "success",
       message: "Reauthenticated",
       user,
     };
@@ -158,18 +154,18 @@ async function reauthenticate(
     const typedError = e as FirebaseError;
     if (typedError.code === "auth/wrong-password") {
       return {
-        status: 0,
+        status: "notice",
         message: "Incorrect password",
       };
     } else if (typedError.code === "auth/invalid-credential") {
       return {
-        status: 0,
+        status: "notice",
         message:
           "Password is incorrect or your account does not have password authentication enabled.",
       };
     } else {
       return {
-        status: -1,
+        status: "error",
         message:
           "Failed to reauthenticate: " +
           (typedError?.message ?? JSON.stringify(e)),
@@ -209,7 +205,6 @@ list.updateEmail = new SimpleModal({
     },
   ],
   buttonText: "update",
-  onlineOnly: true,
   execFn: async (
     _thisPopup,
     password,
@@ -218,13 +213,13 @@ list.updateEmail = new SimpleModal({
   ): Promise<ExecReturn> => {
     if (email !== emailConfirm) {
       return {
-        status: 0,
+        status: "notice",
         message: "Emails don't match",
       };
     }
 
     const reauth = await reauthenticate({ password });
-    if (reauth.status !== 1) {
+    if (reauth.status !== "success") {
       return {
         status: reauth.status,
         message: reauth.message,
@@ -240,7 +235,7 @@ list.updateEmail = new SimpleModal({
 
     if (response.status !== 200) {
       return {
-        status: -1,
+        status: "error",
         message: "Failed to update email",
         notificationOptions: { response },
       };
@@ -249,7 +244,7 @@ list.updateEmail = new SimpleModal({
     AccountController.signOut();
 
     return {
-      status: 1,
+      status: "success",
       message: "Email updated",
     };
   },
@@ -273,14 +268,13 @@ list.removeGoogleAuth = new SimpleModal({
       initVal: "",
     },
   ],
-  onlineOnly: true,
   buttonText: "remove",
   execFn: async (_thisPopup, password): Promise<ExecReturn> => {
     const reauth = await reauthenticate({
       password,
       excludeMethod: "google.com",
     });
-    if (reauth.status !== 1) {
+    if (reauth.status !== "success") {
       return {
         status: reauth.status,
         message: reauth.message,
@@ -292,7 +286,7 @@ list.removeGoogleAuth = new SimpleModal({
     } catch (e) {
       const message = createErrorMessage(e, "Failed to unlink Google account");
       return {
-        status: -1,
+        status: "error",
         message,
       };
     }
@@ -301,7 +295,7 @@ list.removeGoogleAuth = new SimpleModal({
 
     reloadAfter(3);
     return {
-      status: 1,
+      status: "success",
       message: "Google authentication removed",
     };
   },
@@ -327,14 +321,13 @@ list.removeGithubAuth = new SimpleModal({
       initVal: "",
     },
   ],
-  onlineOnly: true,
   buttonText: "remove",
   execFn: async (_thisPopup, password): Promise<ExecReturn> => {
     const reauth = await reauthenticate({
       password,
       excludeMethod: "github.com",
     });
-    if (reauth.status !== 1) {
+    if (reauth.status !== "success") {
       return {
         status: reauth.status,
         message: reauth.message,
@@ -346,7 +339,7 @@ list.removeGithubAuth = new SimpleModal({
     } catch (e) {
       const message = createErrorMessage(e, "Failed to unlink GitHub account");
       return {
-        status: -1,
+        status: "error",
         message,
       };
     }
@@ -355,7 +348,7 @@ list.removeGithubAuth = new SimpleModal({
 
     reloadAfter(3);
     return {
-      status: 1,
+      status: "success",
       message: "GitHub authentication removed",
     };
   },
@@ -380,13 +373,12 @@ list.removePasswordAuth = new SimpleModal({
       label: `I understand I will lose access to my Monkeytype account if my Google/GitHub account is lost or disabled.`,
     },
   ],
-  onlineOnly: true,
   buttonText: "reauthenticate to remove",
   execFn: async (_thisPopup): Promise<ExecReturn> => {
     const reauth = await reauthenticate({
       excludeMethod: "password",
     });
-    if (reauth.status !== 1) {
+    if (reauth.status !== "success") {
       return {
         status: reauth.status,
         message: reauth.message,
@@ -401,7 +393,7 @@ list.removePasswordAuth = new SimpleModal({
         "Failed to remove password authentication",
       );
       return {
-        status: -1,
+        status: "error",
         message,
       };
     }
@@ -410,7 +402,7 @@ list.removePasswordAuth = new SimpleModal({
 
     reloadAfter(3);
     return {
-      status: 1,
+      status: "success",
       message: "Password authentication removed",
     };
   },
@@ -443,10 +435,9 @@ list.updateName = new SimpleModal({
     },
   ],
   buttonText: "update",
-  onlineOnly: true,
   execFn: async (_thisPopup, password, newName): Promise<ExecReturn> => {
     const reauth = await reauthenticate({ password });
-    if (reauth.status !== 1) {
+    if (reauth.status !== "success") {
       return {
         status: reauth.status,
         message: reauth.message,
@@ -458,7 +449,7 @@ list.updateName = new SimpleModal({
     });
     if (response.status !== 200) {
       return {
-        status: -1,
+        status: "error",
         message: "Failed to update name",
         notificationOptions: { response },
       };
@@ -474,7 +465,7 @@ list.updateName = new SimpleModal({
     }
 
     return {
-      status: 1,
+      status: "success",
       message: "Name updated",
     };
   },
@@ -517,7 +508,6 @@ list.updatePassword = new SimpleModal({
     },
   ],
   buttonText: "update",
-  onlineOnly: true,
   execFn: async (
     _thisPopup,
     previousPass,
@@ -526,20 +516,20 @@ list.updatePassword = new SimpleModal({
   ): Promise<ExecReturn> => {
     if (newPassword !== newPassConfirm) {
       return {
-        status: 0,
+        status: "notice",
         message: "New passwords don't match",
       };
     }
 
     if (newPassword === previousPass) {
       return {
-        status: 0,
+        status: "notice",
         message: "New password must be different from previous password",
       };
     }
 
     const reauth = await reauthenticate({ password: previousPass });
-    if (reauth.status !== 1) {
+    if (reauth.status !== "success") {
       return {
         status: reauth.status,
         message: reauth.message,
@@ -552,7 +542,7 @@ list.updatePassword = new SimpleModal({
 
     if (response.status !== 200) {
       return {
-        status: -1,
+        status: "error",
         message: "Failed to update password",
         notificationOptions: { response },
       };
@@ -561,7 +551,7 @@ list.updatePassword = new SimpleModal({
     AccountController.signOut();
 
     return {
-      status: 1,
+      status: "success",
       message: "Password updated",
     };
   },
@@ -601,7 +591,6 @@ list.addPasswordAuth = new SimpleModal({
     },
   ],
   buttonText: "reauthenticate to add",
-  onlineOnly: true,
   execFn: async (
     _thisPopup,
     email,
@@ -611,20 +600,20 @@ list.addPasswordAuth = new SimpleModal({
   ): Promise<ExecReturn> => {
     if (email !== emailConfirm) {
       return {
-        status: 0,
+        status: "notice",
         message: "Emails don't match",
       };
     }
 
     if (password !== passConfirm) {
       return {
-        status: 0,
+        status: "notice",
         message: "Passwords don't match",
       };
     }
 
     const reauth = await reauthenticate({ password });
-    if (reauth.status !== 1) {
+    if (reauth.status !== "success") {
       return {
         status: reauth.status,
         message: reauth.message,
@@ -640,7 +629,7 @@ list.addPasswordAuth = new SimpleModal({
         "Failed to add password authentication",
       );
       return {
-        status: -1,
+        status: "error",
         message,
       };
     }
@@ -653,7 +642,7 @@ list.addPasswordAuth = new SimpleModal({
     });
     if (response.status !== 200) {
       return {
-        status: -1,
+        status: "error",
         message:
           "Password authentication added but updating the database email failed. This shouldn't happen, please contact support. Error",
         notificationOptions: { response },
@@ -662,7 +651,7 @@ list.addPasswordAuth = new SimpleModal({
 
     AccountSettings.updateUI();
     return {
-      status: 1,
+      status: "success",
       message: "Password authentication added",
     };
   },
@@ -680,22 +669,21 @@ list.deleteAccount = new SimpleModal({
   ],
   text: "This is the last time you can change your mind. After pressing the button everything is gone.",
   buttonText: "delete",
-  onlineOnly: true,
   execFn: async (_thisPopup, password): Promise<ExecReturn> => {
     const reauth = await reauthenticate({ password });
-    if (reauth.status !== 1) {
+    if (reauth.status !== "success") {
       return {
         status: reauth.status,
         message: reauth.message,
       };
     }
 
-    Notifications.add("Deleting all data...", 0);
+    showNoticeNotification("Deleting all data...");
     const response = await Ape.users.delete();
 
     if (response.status !== 200) {
       return {
-        status: -1,
+        status: "error",
         message: "Failed to delete user data",
         notificationOptions: { response },
       };
@@ -704,7 +692,7 @@ list.deleteAccount = new SimpleModal({
     reloadAfter(3);
 
     return {
-      status: 1,
+      status: "success",
       message: "Account deleted, goodbye",
     };
   },
@@ -729,25 +717,24 @@ list.resetAccount = new SimpleModal({
   ],
   text: "This is the last time you can change your mind. After pressing the button everything is gone.",
   buttonText: "reset",
-  onlineOnly: true,
   execFn: async (_thisPopup, password): Promise<ExecReturn> => {
     const reauth = await reauthenticate({ password });
-    if (reauth.status !== 1) {
+    if (reauth.status !== "success") {
       return {
         status: reauth.status,
         message: reauth.message,
       };
     }
 
-    Notifications.add("Resetting settings...", 0);
+    showNoticeNotification("Resetting settings...");
     await resetConfig();
     await FileStorage.deleteFile("LocalBackgroundFile");
 
-    Notifications.add("Resetting account...", 0);
+    showNoticeNotification("Resetting account...");
     const response = await Ape.users.reset();
     if (response.status !== 200) {
       return {
-        status: -1,
+        status: "error",
         message: "Failed to reset account",
         notificationOptions: { response },
       };
@@ -756,7 +743,7 @@ list.resetAccount = new SimpleModal({
     reloadAfter(3);
 
     return {
-      status: 1,
+      status: "success",
       message: "Account reset",
     };
   },
@@ -781,10 +768,9 @@ list.optOutOfLeaderboards = new SimpleModal({
   ],
   text: "Are you sure you want to opt out of leaderboards?",
   buttonText: "opt out",
-  onlineOnly: true,
   execFn: async (_thisPopup, password): Promise<ExecReturn> => {
     const reauth = await reauthenticate({ password });
-    if (reauth.status !== 1) {
+    if (reauth.status !== "success") {
       return {
         status: reauth.status,
         message: reauth.message,
@@ -794,7 +780,7 @@ list.optOutOfLeaderboards = new SimpleModal({
     const response = await Ape.users.optOutOfLeaderboards();
     if (response.status !== 200) {
       return {
-        status: -1,
+        status: "error",
         message: "Failed to opt out",
         notificationOptions: { response },
       };
@@ -803,7 +789,7 @@ list.optOutOfLeaderboards = new SimpleModal({
     reloadAfter(3);
 
     return {
-      status: 1,
+      status: "success",
       message: "Leaderboards opt out successful",
     };
   },
@@ -826,7 +812,7 @@ list.applyCustomFont = new SimpleModal({
     Settings.groups["fontFamily"]?.setValue(fontName.replace(/\s/g, "_"));
 
     return {
-      status: 1,
+      status: "success",
       message: "Font applied",
     };
   },
@@ -843,10 +829,9 @@ list.resetPersonalBests = new SimpleModal({
     },
   ],
   buttonText: "reset",
-  onlineOnly: true,
   execFn: async (_thisPopup, password): Promise<ExecReturn> => {
     const reauth = await reauthenticate({ password });
-    if (reauth.status !== 1) {
+    if (reauth.status !== "success") {
       return {
         status: reauth.status,
         message: reauth.message,
@@ -856,7 +841,7 @@ list.resetPersonalBests = new SimpleModal({
     const response = await Ape.users.deletePersonalBests();
     if (response.status !== 200) {
       return {
-        status: -1,
+        status: "error",
         message: "Failed to reset personal bests",
         notificationOptions: { response },
       };
@@ -865,7 +850,7 @@ list.resetPersonalBests = new SimpleModal({
     const snapshot = DB.getSnapshot();
     if (!snapshot) {
       return {
-        status: -1,
+        status: "error",
         message: "Failed to reset personal bests: no snapshot",
       };
     }
@@ -879,7 +864,7 @@ list.resetPersonalBests = new SimpleModal({
     };
 
     return {
-      status: 1,
+      status: "success",
       message: "Personal bests reset",
     };
   },
@@ -897,12 +882,11 @@ list.resetSettings = new SimpleModal({
   title: "Reset settings",
   text: "Are you sure you want to reset all your settings?",
   buttonText: "reset",
-  onlineOnly: true,
   execFn: async (): Promise<ExecReturn> => {
     await resetConfig();
     await FileStorage.deleteFile("LocalBackgroundFile");
     return {
-      status: 1,
+      status: "success",
       message: "Settings reset",
     };
   },
@@ -920,10 +904,9 @@ list.revokeAllTokens = new SimpleModal({
   ],
   text: "Are you sure you want to do this? This will log you out of all devices.",
   buttonText: "revoke all",
-  onlineOnly: true,
   execFn: async (_thisPopup, password): Promise<ExecReturn> => {
     const reauth = await reauthenticate({ password });
-    if (reauth.status !== 1) {
+    if (reauth.status !== "success") {
       return {
         status: reauth.status,
         message: reauth.message,
@@ -933,7 +916,7 @@ list.revokeAllTokens = new SimpleModal({
     const response = await Ape.users.revokeAllTokens();
     if (response.status !== 200) {
       return {
-        status: -1,
+        status: "error",
         message: "Failed to revoke tokens",
         notificationOptions: { response },
       };
@@ -942,7 +925,7 @@ list.revokeAllTokens = new SimpleModal({
     reloadAfter(3);
 
     return {
-      status: 1,
+      status: "success",
       message: "Tokens revoked",
     };
   },
@@ -962,12 +945,11 @@ list.unlinkDiscord = new SimpleModal({
   title: "Unlink Discord",
   text: "Are you sure you want to unlink your Discord account?",
   buttonText: "unlink",
-  onlineOnly: true,
   execFn: async (): Promise<ExecReturn> => {
     const snap = DB.getSnapshot();
     if (!snap) {
       return {
-        status: -1,
+        status: "error",
         message: "Failed to unlink Discord: no snapshot",
       };
     }
@@ -975,7 +957,7 @@ list.unlinkDiscord = new SimpleModal({
     const response = await Ape.users.unlinkDiscord();
     if (response.status !== 200) {
       return {
-        status: -1,
+        status: "error",
         message: "Failed to unlink Discord",
         notificationOptions: { response },
       };
@@ -987,71 +969,19 @@ list.unlinkDiscord = new SimpleModal({
     AccountSettings.updateUI();
 
     return {
-      status: 1,
+      status: "success",
       message: "Discord unlinked",
     };
   },
 });
 
-list.deleteCustomText = new SimpleModal({
-  id: "deleteCustomText",
-  title: "Delete custom text",
-  text: "Are you sure?",
-  buttonText: "delete",
-  execFn: async (_thisPopup): Promise<ExecReturn> => {
-    CustomText.deleteCustomText(_thisPopup.parameters[0] as string, false);
-    CustomTextState.setCustomTextName("", undefined);
-
-    return {
-      status: 1,
-      message: "Custom text deleted",
-    };
-  },
-  beforeInitFn: (_thisPopup): void => {
-    _thisPopup.text = `Are you sure you want to delete custom text ${_thisPopup.parameters[0]}?`;
-  },
-});
-
-list.deleteCustomTextLong = new SimpleModal({
-  id: "deleteCustomTextLong",
-  title: "Delete custom text",
-  text: "Are you sure?",
-  buttonText: "delete",
-  execFn: async (_thisPopup): Promise<ExecReturn> => {
-    CustomText.deleteCustomText(_thisPopup.parameters[0] as string, true);
-    CustomTextState.setCustomTextName("", undefined);
-
-    return {
-      status: 1,
-      message: "Custom text deleted",
-    };
-  },
-  beforeInitFn: (_thisPopup): void => {
-    _thisPopup.text = `Are you sure you want to delete custom text ${_thisPopup.parameters[0]}?`;
-  },
-});
-
-list.resetProgressCustomTextLong = new SimpleModal({
-  id: "resetProgressCustomTextLong",
-  title: "Reset progress for custom text",
-  text: "Are you sure?",
-  buttonText: "reset",
-  execFn: async (_thisPopup): Promise<ExecReturn> => {
-    CustomText.setCustomTextLongProgress(_thisPopup.parameters[0] as string, 0);
-    const text = CustomText.getCustomText(
-      _thisPopup.parameters[0] as string,
-      true,
-    );
-    CustomText.setText(text);
-    return {
-      status: 1,
-      message: "Custom text progress reset",
-    };
-  },
-  beforeInitFn: (_thisPopup): void => {
-    _thisPopup.text = `Are you sure you want to reset your progress for custom text ${_thisPopup.parameters[0]}?`;
-  },
-});
+const customThemeValidation = async (
+  name: string,
+): Promise<IsValidResponse> => {
+  const validationResult = CustomThemeNameSchema.safeParse(normalizeName(name));
+  if (validationResult.success) return true;
+  return validationResult.error.errors.map((err) => err.message).join(", ");
+};
 
 list.updateCustomTheme = new SimpleModal({
   id: "updateCustomTheme",
@@ -1061,6 +991,7 @@ list.updateCustomTheme = new SimpleModal({
       type: "text",
       placeholder: "name",
       initVal: "",
+      validation: { isValid: customThemeValidation, debounceDelay: 0 },
     },
     {
       type: "checkbox",
@@ -1070,12 +1001,11 @@ list.updateCustomTheme = new SimpleModal({
     },
   ],
   buttonText: "update",
-  onlineOnly: true,
   execFn: async (_thisPopup, name, updateColors): Promise<ExecReturn> => {
     const snapshot = DB.getSnapshot();
     if (!snapshot) {
       return {
-        status: -1,
+        status: "error",
         message: "Failed to update custom theme: no snapshot",
       };
     }
@@ -1085,7 +1015,7 @@ list.updateCustomTheme = new SimpleModal({
     );
     if (customTheme === undefined) {
       return {
-        status: -1,
+        status: "error",
         message: "Failed to update custom theme: theme not found",
       };
     }
@@ -1096,13 +1026,13 @@ list.updateCustomTheme = new SimpleModal({
         : customTheme.colors;
 
     const newTheme = {
-      name: name.replaceAll(" ", "_"),
+      name: normalizeName(name),
       colors: newColors,
     };
     const validation = await DB.editCustomTheme(customTheme._id, newTheme);
     if (!validation) {
       return {
-        status: -1,
+        status: "error",
         message: "Failed to update custom theme",
       };
     }
@@ -1110,7 +1040,7 @@ list.updateCustomTheme = new SimpleModal({
     void ThemePicker.fillCustomButtons();
 
     return {
-      status: 1,
+      status: "success",
       message: "Custom theme updated",
     };
   },
@@ -1122,7 +1052,10 @@ list.updateCustomTheme = new SimpleModal({
       (t) => t._id === _thisPopup.parameters[0],
     );
     if (!customTheme) return;
-    (_thisPopup.inputs[0] as TextInput).initVal = customTheme.name;
+    (_thisPopup.inputs[0] as TextInput).initVal = customTheme.name.replace(
+      /_/g,
+      " ",
+    );
   },
 });
 
@@ -1131,13 +1064,12 @@ list.deleteCustomTheme = new SimpleModal({
   title: "Delete custom theme",
   text: "Are you sure?",
   buttonText: "delete",
-  onlineOnly: true,
   execFn: async (_thisPopup): Promise<ExecReturn> => {
     await DB.deleteCustomTheme(_thisPopup.parameters[0] as string);
     void ThemePicker.fillCustomButtons();
 
     return {
-      status: 1,
+      status: "success",
       message: "Custom theme deleted",
     };
   },
@@ -1229,40 +1161,11 @@ list.devGenerateData = new SimpleModal({
     const result = await Ape.dev.generateData({ body: request });
 
     return {
-      status: result.status === 200 ? 1 : -1,
+      status: result.status === 200 ? "success" : "error",
       message: result.body.message,
       hideOptions: {
         clearModalChain: true,
       },
-    };
-  },
-});
-
-list.lbGoToPage = new SimpleModal({
-  id: "lbGoToPage",
-  title: "Go to page",
-  inputs: [
-    {
-      type: "number",
-      placeholder: "Page number",
-    },
-  ],
-  buttonText: "Go",
-  execFn: async (_thisPopup, pageNumber): Promise<ExecReturn> => {
-    const page = parseInt(pageNumber, 10);
-    if (isNaN(page) || page < 1) {
-      return {
-        status: 0,
-        message: "Invalid page number",
-      };
-    }
-
-    goToPage(page - 1);
-
-    return {
-      status: 1,
-      message: "Navigating to page " + page,
-      showNotification: false,
     };
   },
 });

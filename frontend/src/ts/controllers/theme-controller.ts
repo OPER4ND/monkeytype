@@ -1,17 +1,19 @@
 import * as Arrays from "../utils/arrays";
 import { isColorDark, isColorLight } from "../utils/colors";
-import Config, { setConfig } from "../config";
+
+import { Config } from "../config/store";
+import { setConfig } from "../config/setters";
 import * as BackgroundFilter from "../elements/custom-background-filter";
-import * as ConfigEvent from "../observables/config-event";
+import { configEvent } from "../events/config";
 import * as DB from "../db";
-import * as Notifications from "../elements/notifications";
+import { showNoticeNotification } from "../states/notifications";
 import { debounce } from "throttle-debounce";
 import { CustomThemeColors, ThemeName } from "@monkeytype/schemas/configs";
 import { Theme, themes, ThemesList } from "../constants/themes";
 import fileStorage from "../utils/file-storage";
 import { qs } from "../utils/dom";
-import { setThemeIndicator } from "../signals/core";
-import { setTheme, ThemeIdentifier } from "../signals/theme";
+import { setThemeIndicator } from "../states/core";
+import { setTheme, ThemeIdentifier } from "../states/theme";
 
 export let randomTheme: ThemeIdentifier | null = null;
 let isPreviewingTheme = false;
@@ -83,7 +85,21 @@ function updateThemeIndicator(nameOverride?: string): void {
   //text
   let str: string = Config.theme;
   if (randomTheme !== null) str = randomTheme;
-  if (Config.customTheme) str = "custom";
+
+  if (Config.customTheme && nameOverride === undefined) {
+    // Match current custom theme by colors since Config does not store custom theme IDs
+    const snapshot = DB.getSnapshot();
+    const matchedTheme = snapshot?.customThemes?.find((ct) =>
+      Arrays.areSortedArraysEqual(ct.colors, Config.customThemeColors),
+    );
+
+    if (matchedTheme) {
+      str = `${matchedTheme.name} (custom)`;
+    } else {
+      str = "custom";
+    }
+  }
+
   if (nameOverride !== undefined && nameOverride !== "") str = nameOverride;
   str = str.replace(/_/g, " ");
 
@@ -130,7 +146,7 @@ async function set(
 
   if (!isAutoSwitch && Config.autoSwitchTheme) {
     setConfig("autoSwitchTheme", false);
-    Notifications.add("Auto switch theme disabled", 0);
+    showNoticeNotification("Auto switch theme disabled");
   }
 }
 
@@ -217,7 +233,7 @@ export async function randomizeTheme(): Promise<void> {
           ?.name ?? "custom"
       ).replace(/_/g, " ");
     }
-    Notifications.add(name, 0);
+    showNoticeNotification(name);
   }
 }
 
@@ -259,7 +275,7 @@ export async function applyCustomBackground(): Promise<void> {
   // hide the filter section initially and always
   qs(
     ".pageSettings .section[data-config-name='customBackgroundFilter']",
-  )?.addClass("hidden");
+  )?.hide();
 
   if (backgroundUrl === "") {
     qs("#words")?.removeClass("noErrorBorder");
@@ -282,7 +298,7 @@ export async function applyCustomBackground(): Promise<void> {
       // show the filter section only if the image loads successfully
       qs(
         ".pageSettings .section[data-config-name='customBackgroundFilter']",
-      )?.removeClass("hidden");
+      )?.show();
     };
 
     container?.replaceChildren(img);
@@ -290,32 +306,6 @@ export async function applyCustomBackground(): Promise<void> {
     BackgroundFilter.apply();
     applyCustomBackgroundSize();
   }
-}
-
-export async function applyFontFamily(): Promise<void> {
-  let font = Config.fontFamily.replace(/_/g, " ");
-
-  const localFont = await fileStorage.getFile("LocalFontFamilyFile");
-  if (localFont === undefined) {
-    //use config font
-    qs(".customFont")?.empty();
-  } else {
-    font = "LOCALCUSTOM";
-
-    qs(".customFont")?.setHtml(`
-      @font-face{ 
-        font-family: LOCALCUSTOM;
-        src: url(${localFont});
-        font-weight: 400;
-        font-style: normal;
-        font-display: block;
-      }`);
-  }
-
-  document.documentElement.style.setProperty(
-    "--font",
-    `"${font}", "Roboto Mono", "Vazirmatn", monospace`,
-  );
 }
 
 window
@@ -331,7 +321,7 @@ window
 
 let ignoreConfigEvent = false;
 
-ConfigEvent.subscribe(async ({ key, newValue, nosave }) => {
+configEvent.subscribe(async ({ key, newValue, nosave }) => {
   if (key === "fullConfigChange") {
     ignoreConfigEvent = true;
   }
@@ -420,10 +410,9 @@ ConfigEvent.subscribe(async ({ key, newValue, nosave }) => {
 });
 
 window.addEventListener("customBackgroundFailed", () => {
-  Notifications.add(
+  showNoticeNotification(
     "Custom background link is either temporarily unavailable or expired. Please make sure the URL is correct or change it",
-    0,
-    { duration: 5 },
+    { durationMs: 5000 },
   );
 });
 

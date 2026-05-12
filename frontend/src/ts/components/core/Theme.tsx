@@ -1,13 +1,12 @@
 import { Link, Meta, MetaProvider, Style } from "@solidjs/meta";
-import { createEffect, createMemo, JSXElement } from "solid-js";
+import { createEffect, createMemo, JSXElement, Show } from "solid-js";
 
 import { themes } from "../../constants/themes";
-import * as Notifications from "../../elements/notifications";
 import { createDebouncedEffectOn } from "../../hooks/effects";
 import { useRefWithUtils } from "../../hooks/useRefWithUtils";
-import { hideLoaderBar, showLoaderBar } from "../../signals/loader-bar";
-import { getTheme } from "../../signals/theme";
-
+import { hideLoaderBar, showLoaderBar } from "../../states/loader-bar";
+import { showNoticeNotification } from "../../states/notifications";
+import { getTheme } from "../../states/theme";
 import { FavIcon } from "./FavIcon";
 
 export function Theme(): JSXElement {
@@ -34,7 +33,7 @@ export function Theme(): JSXElement {
     const name = target.dataset["name"];
     console.debug("Theme component failed to load style", name, e);
     console.error(`Failed to load theme ${name}`, e);
-    Notifications.add("Failed to load theme", 0);
+    showNoticeNotification("Failed to load theme");
   };
 
   createDebouncedEffectOn(125, getTheme, (colors) => {
@@ -53,27 +52,39 @@ export function Theme(): JSXElement {
 }`);
   });
 
+  const isThemeWithCss = () => {
+    const name = getThemeName();
+    return name !== "custom" && (themes[name]?.hasCss ?? false);
+  };
+
   createEffect(() => {
     const name = getThemeName();
-    const hasCss = name !== "custom" && (themes[name].hasCss ?? false);
+    const hasCss = isThemeWithCss();
+
     console.debug(
       `Theme component ${hasCss ? "loading style" : "removing style"} for theme ${name}`,
     );
-    if (hasCss) showLoaderBar();
+    if (hasCss) {
+      showLoaderBar();
+    } else {
+      hideLoaderBar();
+    }
     linkEl()?.setAttribute("href", hasCss ? `/themes/${name}.css` : "");
   });
 
   return (
     <MetaProvider>
       <Style id="theme" ref={styleRef} />
-      <Link
-        ref={linkRef}
-        rel="stylesheet"
-        id="currentTheme"
-        data-name={getTheme().name}
-        onError={onError}
-        onLoad={onLoad}
-      />
+      <Show when={isThemeWithCss()}>
+        <Link
+          ref={linkRef}
+          rel="stylesheet"
+          id="currentTheme"
+          data-name={getTheme().name}
+          onError={onError}
+          onLoad={onLoad}
+        />
+      </Show>
       <Meta id="metaThemeColor" name="theme-color" content={getTheme().bg} />
       <FavIcon theme={getTheme()} />
     </MetaProvider>

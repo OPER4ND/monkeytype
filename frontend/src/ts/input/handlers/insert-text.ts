@@ -20,17 +20,17 @@ import {
   isFunboxActiveWithProperty,
 } from "../../test/funbox/list";
 import * as Replay from "../../test/replay";
-import Config from "../../config";
-import * as KeymapEvent from "../../observables/keymap-event";
+import { Config } from "../../config/store";
+import { flash } from "../../events/keymap";
 import * as WeakSpot from "../../test/weak-spot";
-import * as CompositionState from "../../states/composition";
+import * as CompositionState from "../../legacy-states/composition";
 import {
   isCorrectShiftUsed,
   getIncorrectShiftsInARow,
   incrementIncorrectShiftsInARow,
   resetIncorrectShiftsInARow,
 } from "../state";
-import * as Notifications from "../../elements/notifications";
+import { showNoticeNotification } from "../../states/notifications";
 import { goToNextWord } from "../helpers/word-navigation";
 import { onBeforeInsertText } from "./before-insert-text";
 import {
@@ -85,7 +85,7 @@ export async function onInsertText(options: OnInsertTextParams): Promise<void> {
   const charOverride = charOverrides.get(options.data);
   if (
     charOverride !== undefined &&
-    TestWords.words.getCurrent()[TestInput.input.current.length] !==
+    TestWords.words.getCurrentText()[TestInput.input.current.length] !==
       options.data
   ) {
     // replace the data with the override
@@ -101,7 +101,7 @@ export async function onInsertText(options: OnInsertTextParams): Promise<void> {
 
   // input and target word
   const testInput = TestInput.input.current;
-  const currentWord = TestWords.words.getCurrent();
+  const currentWord = TestWords.words.getCurrentText();
 
   // if the character is visually equal, replace it with the target character
   // this ensures all future equivalence checks work correctly
@@ -151,7 +151,7 @@ export async function onInsertText(options: OnInsertTextParams): Promise<void> {
   // word navigation check
   const noSpaceForce =
     isFunboxActiveWithProperty("nospace") &&
-    (testInput + data).length === TestWords.words.getCurrent().length;
+    (testInput + data).length === TestWords.words.getCurrentText().length;
   const shouldGoToNextWord =
     ((charIsSpace || charIsNewline) && !shouldInsertSpace) || noSpaceForce;
 
@@ -169,12 +169,12 @@ export async function onInsertText(options: OnInsertTextParams): Promise<void> {
   TestInput.pushKeypressWord(wordIndex);
   if (!correct) {
     TestInput.incrementKeypressErrors();
-    TestInput.pushMissedWord(TestWords.words.getCurrent());
+    TestInput.pushMissedWord(TestWords.words.getCurrentText());
   }
   if (Config.keymapMode === "react") {
-    void KeymapEvent.flash(data, correct);
+    flash(data, correct);
   }
-  if (testInput.length === 0) {
+  if (testInput.length === 0 && !isCompositionEnding) {
     TestInput.setBurstStart(now);
   }
   if (!shouldGoToNextWord) {
@@ -198,7 +198,7 @@ export async function onInsertText(options: OnInsertTextParams): Promise<void> {
     visualInputOverride = undefined;
     incrementIncorrectShiftsInARow();
     if (getIncorrectShiftsInARow() >= 5) {
-      Notifications.add("Opposite shift mode is on.", 0, {
+      showNoticeNotification("Opposite shift mode is on.", {
         important: true,
         customTitle: "Reminder",
       });
@@ -236,7 +236,7 @@ export async function onInsertText(options: OnInsertTextParams): Promise<void> {
   */
 
   //this COULD be the next word because we are awaiting goToNextWord
-  const nextWord = TestWords.words.getCurrent();
+  const nextWord = TestWords.words.getCurrentText();
   const doesNextWordHaveTab = /^\t+/.test(nextWord);
   const isCurrentCharTab = nextWord[TestInput.input.current.length] === "\t";
 

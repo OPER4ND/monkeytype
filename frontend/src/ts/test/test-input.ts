@@ -1,7 +1,7 @@
 import { lastElementFromArray } from "../utils/arrays";
 import { mean, roundTo2 } from "@monkeytype/util/numbers";
 import * as TestState from "./test-state";
-import Config from "../config";
+import { Config } from "../config/store";
 import { getInputElementValue } from "../input/input-element";
 
 const keysToTrack = new Set([
@@ -212,7 +212,11 @@ export const corrected = new Corrected();
 export let keypressCountHistory: number[] = [];
 let currentKeypressCount = 0;
 export let currentBurstStart = 0;
-export let missedWords: Record<string, number> = {};
+type MissedWordsType = Record<string, number>;
+// We're using Object.create(null) to make sure that __proto__ won't have any special meaning when it's used to index the missedWords object (so if a user mistypes the word __proto__ it will appear in the practise words test)
+export let missedWords: MissedWordsType = Object.create(
+  null,
+) as MissedWordsType;
 export let accuracy = {
   correct: 0,
   incorrect: 0,
@@ -448,10 +452,10 @@ function updateOverlap(now: number): void {
   }
 }
 
-export function resetKeypressTimings(): void {
-  //because keydown triggers before input, we need to grab the first keypress data here and carry it over
+export function carryoverFirstKeypress(): void {
+  // Because keydown triggers before input, we need to grab the first keypress data here and carry it over
 
-  //take the key with the largest index
+  // Take the key with the largest index
   const lastKey = Object.keys(keyDownData).reduce((a, b) => {
     const aIndex = keyDownData[a]?.index;
     const bIndex = keyDownData[b]?.index;
@@ -460,10 +464,30 @@ export function resetKeypressTimings(): void {
     return aIndex > bIndex ? a : b;
   }, "");
 
-  //get the data
+  // Get the data
   const lastKeyData = keyDownData[lastKey];
 
-  //reset
+  // Carry over
+  if (lastKeyData !== undefined) {
+    keypressTimings = {
+      spacing: {
+        first: lastKeyData.timestamp,
+        last: lastKeyData.timestamp,
+        array: [],
+      },
+      duration: {
+        array: [0],
+      },
+    };
+    keyDownData[lastKey] = {
+      timestamp: lastKeyData.timestamp,
+      // Make sure to set it to the first index
+      index: 0,
+    };
+  }
+}
+
+function resetKeypressTimings(): void {
   keypressTimings = {
     spacing: {
       first: -1,
@@ -481,25 +505,6 @@ export function resetKeypressTimings(): void {
   keyDownData = {};
   noCodeIndex = 0;
 
-  //carry over
-  if (lastKeyData !== undefined) {
-    keypressTimings = {
-      spacing: {
-        first: lastKeyData.timestamp,
-        last: lastKeyData.timestamp,
-        array: [],
-      },
-      duration: {
-        array: [0],
-      },
-    };
-    keyDownData[lastKey] = {
-      timestamp: lastKeyData.timestamp,
-      // make sure to set it to the first index
-      index: 0,
-    };
-  }
-
   console.debug("Keypress timings reset");
 }
 
@@ -507,7 +512,7 @@ export function pushMissedWord(word: string): void {
   if (!Object.keys(missedWords).includes(word)) {
     missedWords[word] = 1;
   } else {
-    (missedWords[word] as number)++;
+    (missedWords[word] as number) += 1;
   }
 }
 
@@ -542,9 +547,11 @@ export function restart(): void {
     words: [],
   };
   currentBurstStart = 0;
-  missedWords = {};
+  missedWords = Object.create(null) as MissedWordsType;
   accuracy = {
     correct: 0,
     incorrect: 0,
   };
+
+  resetKeypressTimings();
 }

@@ -10,13 +10,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import AsyncContent, {
   Props,
 } from "../../../src/ts/components/common/AsyncContent";
-import * as Notifications from "../../../src/ts/elements/notifications";
+import * as Notifications from "../../../src/ts/states/notifications";
 
 describe("AsyncContent", () => {
-  const addNotificationMock = vi.spyOn(Notifications, "add");
+  const notifyErrorMock = vi.spyOn(Notifications, "showErrorNotification");
 
   beforeEach(() => {
-    addNotificationMock.mockClear();
+    notifyErrorMock.mockClear();
   });
 
   describe("with single query", () => {
@@ -47,38 +47,51 @@ describe("AsyncContent", () => {
     });
 
     it("renders on resolve", async () => {
-      renderWithQuery({ result: "Test Data" });
+      const { container } = renderWithQuery({ result: "Test Data" });
 
       await waitFor(() => {
         expect(screen.getByTestId("content")).toHaveTextContent("Test Data");
       });
+      const preloader = container.querySelector(".preloader");
+      expect(preloader).not.toBeInTheDocument();
+    });
+
+    it("renders on resolve with object containing null", async () => {
+      const { container } = renderWithQuery({
+        result: { text: "Test Data", extra: null } as any,
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("content")).toBeVisible();
+      });
+      expect(container.innerHTML).toContain("static content");
     });
 
     it("renders default error message on fail", async () => {
-      renderWithQuery({ result: new Error("Test error") });
+      const error = new Error("Test error");
+      renderWithQuery({ result: error });
 
       await waitFor(() => {
         expect(screen.getByText(/An error occurred/)).toBeInTheDocument();
       });
-      expect(addNotificationMock).toHaveBeenCalledWith(
-        "An error occurred: Test error",
-        -1,
-      );
+      expect(notifyErrorMock).toHaveBeenCalledWith("An error occurred", {
+        error,
+      });
     });
 
     it("renders custom error message on fail", async () => {
+      const error = new Error("Test error");
       renderWithQuery(
-        { result: new Error("Test error") },
+        { result: error },
         { errorMessage: "Custom error message" },
       );
 
       await waitFor(() => {
         expect(screen.getByText(/Custom error message/)).toBeInTheDocument();
       });
-      expect(addNotificationMock).toHaveBeenCalledWith(
-        "Custom error message: Test error",
-        -1,
-      );
+      expect(notifyErrorMock).toHaveBeenCalledWith("Custom error message", {
+        error,
+      });
     });
 
     it("ignores error on fail if ignoreError is set", async () => {
@@ -89,7 +102,7 @@ describe("AsyncContent", () => {
       await waitFor(() => {
         expect(screen.getByText(/no data/)).toBeInTheDocument();
       });
-      expect(addNotificationMock).not.toHaveBeenCalled();
+      expect(notifyErrorMock).not.toHaveBeenCalled();
     });
 
     it("renders on pending if alwaysShowContent", async () => {
@@ -111,25 +124,25 @@ describe("AsyncContent", () => {
     });
 
     it("renders on fail if alwaysShowContent", async () => {
+      const error = new Error("Test error");
       renderWithQuery(
-        { result: new Error("Test error") },
+        { result: error },
         { errorMessage: "Custom error message" },
       );
 
       await waitFor(() => {
         expect(screen.getByText(/Custom error message/)).toBeInTheDocument();
       });
-      expect(addNotificationMock).toHaveBeenCalledWith(
-        "Custom error message: Test error",
-        -1,
-      );
+      expect(notifyErrorMock).toHaveBeenCalledWith("Custom error message", {
+        error,
+      });
     });
 
     function renderWithQuery(
       query: {
         result: string | Error;
       },
-      options?: Omit<Props<unknown>, "query" | "queries" | "children">,
+      options?: Omit<Props<{ result: string }>, "queries" | "children">,
     ): {
       container: HTMLElement;
     } {
@@ -148,17 +161,17 @@ describe("AsyncContent", () => {
 
         return (
           <AsyncContent
-            query={myQuery}
-            errorMessage={options?.errorMessage}
-            alwaysShowContent={options?.alwaysShowContent}
-            ignoreError={options?.ignoreError}
-            loader={options?.loader}
+            queries={{ result: myQuery }}
+            {...(options as Props<{ result: string | undefined }>)}
           >
-            {(data: string | undefined) => (
+            {({ resultData }) => (
               <>
-                foo
-                <Show when={data !== undefined} fallback={<div>no data</div>}>
-                  <div data-testid="content">{data}</div>
+                static content
+                <Show
+                  when={resultData() !== undefined}
+                  fallback={<div>no data</div>}
+                >
+                  <div data-testid="content">{resultData()}</div>
                 </Show>
               </>
             )}
@@ -205,7 +218,10 @@ describe("AsyncContent", () => {
     });
 
     it("renders on resolve", async () => {
-      renderWithQuery({ first: "First Data", second: "Second Data" });
+      const { container } = renderWithQuery({
+        first: "First Data",
+        second: "Second Data",
+      });
 
       await waitFor(() => {
         expect(screen.getByTestId("first")).toHaveTextContent("First Data");
@@ -213,33 +229,35 @@ describe("AsyncContent", () => {
       await waitFor(() => {
         expect(screen.getByTestId("second")).toHaveTextContent("Second Data");
       });
+      const preloader = container.querySelector(".preloader");
+      expect(preloader).not.toBeInTheDocument();
     });
 
     it("renders default error message on fail", async () => {
-      renderWithQuery({ first: "data", second: new Error("Test error") });
+      const error = new Error("Test error");
+      renderWithQuery({ first: "data", second: error });
 
       await waitFor(() => {
         expect(screen.getByText(/An error occurred/)).toBeInTheDocument();
       });
-      expect(addNotificationMock).toHaveBeenCalledWith(
-        "An error occurred: Test error",
-        -1,
-      );
+      expect(notifyErrorMock).toHaveBeenCalledWith("An error occurred", {
+        error,
+      });
     });
 
     it("renders custom error message on fail", async () => {
+      const firstError = new Error("First error");
       renderWithQuery(
-        { first: new Error("First error"), second: new Error("Second error") },
+        { first: firstError, second: new Error("Second error") },
         { errorMessage: "Custom error message" },
       );
 
       await waitFor(() => {
         expect(screen.getByText(/Custom error message/)).toBeInTheDocument();
       });
-      expect(addNotificationMock).toHaveBeenCalledWith(
-        "Custom error message: First error",
-        -1,
-      );
+      expect(notifyErrorMock).toHaveBeenCalledWith("Custom error message", {
+        error: firstError,
+      });
     });
 
     it("ignores error on fail if ignoreError is set", async () => {
@@ -252,7 +270,7 @@ describe("AsyncContent", () => {
         expect(screen.getByText(/no data/)).toBeInTheDocument();
       });
 
-      expect(addNotificationMock).not.toHaveBeenCalled();
+      expect(notifyErrorMock).not.toHaveBeenCalled();
     });
 
     it("renders on pending if alwaysShowContent", async () => {
@@ -287,18 +305,18 @@ describe("AsyncContent", () => {
     });
 
     it("renders on fail if alwaysShowContent", async () => {
+      const error = new Error("Test error");
       renderWithQuery(
-        { first: "data", second: new Error("Test error") },
+        { first: "data", second: error },
         { errorMessage: "Custom error message" },
       );
 
       await waitFor(() => {
         expect(screen.getByText(/Custom error message/)).toBeInTheDocument();
       });
-      expect(addNotificationMock).toHaveBeenCalledWith(
-        "Custom error message: Test error",
-        -1,
-      );
+      expect(notifyErrorMock).toHaveBeenCalledWith("Custom error message", {
+        error,
+      });
     });
 
     function renderWithQuery(
@@ -306,7 +324,10 @@ describe("AsyncContent", () => {
         first: string | Error | undefined;
         second: string | Error | undefined;
       },
-      options?: Omit<Props<unknown>, "query" | "queries" | "children">,
+      options?: Omit<
+        Props<{ first: string; second: string }>,
+        "queries" | "children"
+      >,
     ): {
       container: HTMLElement;
     } {
@@ -334,27 +355,21 @@ describe("AsyncContent", () => {
           retry: 0,
         }));
 
+        type Q = { first: string | undefined; second: string | undefined };
+
         return (
           <AsyncContent
             queries={{ first: firstQuery, second: secondQuery }}
-            errorMessage={options?.errorMessage}
-            alwaysShowContent={options?.alwaysShowContent}
-            ignoreError={options?.ignoreError}
-            loader={options?.loader}
+            {...(options as Props<Q>)}
           >
-            {(results: {
-              first: string | undefined;
-              second: string | undefined;
-            }) => (
+            {({ firstData, secondData }) => (
               <>
                 <Show
-                  when={
-                    results.first !== undefined && results.second !== undefined
-                  }
+                  when={firstData() !== undefined && secondData() !== undefined}
                   fallback={<div>no data</div>}
                 >
-                  <div data-testid="first">{results.first}</div>
-                  <div data-testid="second">{results.second}</div>
+                  <div data-testid="first">{firstData()}</div>
+                  <div data-testid="second">{secondData()}</div>
                 </Show>
               </>
             )}

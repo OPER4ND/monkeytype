@@ -1,28 +1,56 @@
-import Config from "./config";
+import { Config } from "./config/store";
 import * as Caret from "./test/caret";
 import * as CustomText from "./test/custom-text";
 import * as TestState from "./test/test-state";
-import * as ConfigEvent from "./observables/config-event";
+import { configEvent } from "./events/config";
 import { debounce, throttle } from "throttle-debounce";
 import * as TestUI from "./test/test-ui";
-import { getActivePage, getGlobalOffsetTop } from "./signals/core";
-import { isDevEnvironment } from "./utils/misc";
-import { isCustomTextLong } from "./states/custom-text-name";
+import { getActivePage, getGlobalOffsetTop } from "./states/core";
+import { isDevEnvironment } from "./utils/env";
+import { isCustomTextLong } from "./legacy-states/custom-text-name";
 import { canQuickRestart } from "./utils/quick-restart";
 import { FontName } from "@monkeytype/schemas/fonts";
-import { applyFontFamily } from "./controllers/theme-controller";
 import { qs, qsr } from "./utils/dom";
 import { createEffect } from "solid-js";
+import fileStorage from "./utils/file-storage";
 import { convertRemToPixels } from "./utils/numbers";
 
 let isPreviewingFont = false;
 export function previewFontFamily(font: FontName): void {
   document.documentElement.style.setProperty(
     "--font",
-    '"' + font.replaceAll(/_/g, " ") + '", "Roboto Mono", "Vazirmatn"',
+    '"' +
+      font.replaceAll(/_/g, " ") +
+      '", "Roboto Mono", "Vazirharf", "monospace"',
   );
   void TestUI.updateHintsPositionDebounced();
   isPreviewingFont = true;
+}
+
+export async function applyFontFamily(): Promise<void> {
+  let font = Config.fontFamily.replace(/_/g, " ");
+
+  const localFont = await fileStorage.getFile("LocalFontFamilyFile");
+  if (localFont === undefined) {
+    //use config font
+    qs(".customFont")?.empty();
+  } else {
+    font = "LOCALCUSTOM";
+
+    qs(".customFont")?.setHtml(`
+      @font-face{ 
+        font-family: LOCALCUSTOM;
+        src: url(${localFont});
+        font-weight: 400;
+        font-style: normal;
+        font-display: block;
+      }`);
+  }
+
+  document.documentElement.style.setProperty(
+    "--font",
+    `"${font}", "Roboto Mono", "Vazirharf", monospace`,
+  );
 }
 
 export function clearFontPreview(): void {
@@ -44,7 +72,6 @@ export function setMediaQueryDebugLevel(level: number): void {
 }
 
 if (isDevEnvironment()) {
-  qs("header #logo .top")?.setText("localhost");
   qs("head title")?.setText(
     (qs("head title")?.native.textContent ?? "") + " (localhost)",
   );
@@ -106,7 +133,7 @@ createEffect(() => {
   });
 });
 
-ConfigEvent.subscribe(async ({ key }) => {
+configEvent.subscribe(async ({ key }) => {
   if (key === "fontFamily") {
     await applyFontFamily();
   }

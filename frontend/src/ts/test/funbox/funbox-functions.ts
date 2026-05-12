@@ -1,18 +1,22 @@
 import { FunboxWordsFrequency, Wordset } from "../wordset";
 import * as GetText from "../../utils/generate";
-import Config, { setConfig, toggleFunbox } from "../../config";
+import { Config } from "../../config/store";
+import { setConfig, toggleFunbox } from "../../config/setters";
 import * as Misc from "../../utils/misc";
 import * as Strings from "../../utils/strings";
 import { randomIntFromRange } from "@monkeytype/util/numbers";
 import * as Arrays from "../../utils/arrays";
 import { save } from "./funbox-memory";
-import * as TTSEvent from "../../observables/tts-event";
-import * as Notifications from "../../elements/notifications";
+import { ttsEvent } from "../../events/tts";
+import {
+  showNoticeNotification,
+  showErrorNotification,
+} from "../../states/notifications";
 import * as DDR from "../../utils/ddr";
 import * as TestWords from "../test-words";
 import * as TestInput from "../test-input";
 import * as LayoutfluidFunboxTimer from "./layoutfluid-funbox-timer";
-import * as KeymapEvent from "../../observables/keymap-event";
+import { highlight } from "../../events/keymap";
 import * as MemoryTimer from "./memory-funbox-timer";
 import { getPoem } from "../poetry";
 import * as JSONData from "../../utils/json-data";
@@ -50,7 +54,7 @@ export type FunboxFunctions = {
 async function readAheadHandleKeydown(event: KeyboardEvent): Promise<void> {
   const inputCurrentChar = (TestInput.input.current ?? "").slice(-1);
   const wordCurrentChar = TestWords.words
-    .getCurrent()
+    .getCurrentText()
     .slice(TestInput.input.current.length - 1, TestInput.input.current.length);
   const isCorrect = inputCurrentChar === wordCurrentChar;
 
@@ -59,7 +63,7 @@ async function readAheadHandleKeydown(event: KeyboardEvent): Promise<void> {
     !isCorrect &&
     (TestInput.input.current !== "" ||
       TestInput.input.getHistory(TestState.activeWordIndex - 1) !==
-        TestWords.words.get(TestState.activeWordIndex - 1) ||
+        TestWords.words.getText(TestState.activeWordIndex - 1) ||
       Config.freedomMode)
   ) {
     qs("#words")?.addClass("read_ahead_disabled");
@@ -80,7 +84,7 @@ class CharDistribution {
   public addChar(char: string): void {
     this.count++;
     if (char in this.chars) {
-      (this.chars[char] as number)++;
+      (this.chars[char] as number) += 1;
     } else {
       this.chars[char] = 1;
     }
@@ -227,10 +231,10 @@ const list: Partial<Record<FunboxName, FunboxFunctions>> = {
     },
     toggleScript(params: string[]): void {
       if (window.speechSynthesis === undefined) {
-        Notifications.add("Failed to load text-to-speech script", -1);
+        showErrorNotification("Failed to load text-to-speech script");
         return;
       }
-      if (params[0] !== undefined) void TTSEvent.dispatch(params[0]);
+      if (params[0] !== undefined) ttsEvent.dispatch(params[0]);
     },
   },
   arrows: {
@@ -447,27 +451,16 @@ const list: Partial<Record<FunboxName, FunboxFunctions>> = {
           LayoutfluidFunboxTimer.hide();
         }
         setTimeout(() => {
-          void KeymapEvent.highlight(
-            TestWords.words.getCurrent().charAt(TestInput.input.current.length),
+          highlight(
+            TestWords.words
+              .getCurrentText()
+              .charAt(TestInput.input.current.length),
           );
         }, 1);
       }
     },
     getResultContent(): string {
       return Config.customLayoutfluid.join(" ");
-    },
-    restart(): void {
-      if (this.applyConfig) this.applyConfig();
-      setTimeout(() => {
-        void KeymapEvent.highlight(
-          TestWords.words
-            .getCurrent()
-            .substring(
-              TestInput.input.current.length,
-              TestInput.input.current.length + 1,
-            ),
-        );
-      }, 1);
     },
   },
   gibberish: {
@@ -654,25 +647,25 @@ const list: Partial<Record<FunboxName, FunboxFunctions>> = {
       );
       if (isSafari) {
         //Workaround for bug https://bugs.webkit.org/show_bug.cgi?id=256171 in Safari 16.5 or earlier
-        const versionMatch = navigator.userAgent.match(
-          /.*Version\/([0-9]*)\.([0-9]*).*/,
+        const versionMatch = /.*Version\/([0-9]*)\.([0-9]*).*/.exec(
+          navigator.userAgent,
         );
         const mainVersion =
           versionMatch !== null ? parseInt(versionMatch[1] ?? "0") : 0;
         const minorVersion =
           versionMatch !== null ? parseInt(versionMatch[2] ?? "0") : 0;
         if (mainVersion <= 16 && minorVersion <= 5) {
-          Notifications.add(
+          showNoticeNotification(
             "CRT is not available on Safari 16.5 or earlier.",
-            0,
             {
-              duration: 5,
+              durationMs: 5000,
             },
           );
           toggleFunbox("crt");
           return;
         }
       }
+      qs("#scanline")?.remove();
       qs("body")?.appendHtml('<div id="scanline" />');
       qs("body")?.addClass("crtmode");
       qs("#globalFunBoxTheme")?.setAttribute("href", `funbox/crt.css`);
@@ -692,9 +685,8 @@ const list: Partial<Record<FunboxName, FunboxFunctions>> = {
     async withWords(_words) {
       const promises = Config.customPolyglot.map(async (language) =>
         JSONData.getLanguage(language).catch(() => {
-          Notifications.add(
+          showNoticeNotification(
             `Failed to load language: ${language}. It will be ignored.`,
-            0,
           );
           return null;
         }),
@@ -719,13 +711,12 @@ const list: Partial<Record<FunboxName, FunboxFunctions>> = {
           nosave: true,
         });
         toggleFunbox("polyglot", true);
-        Notifications.add(
+        showNoticeNotification(
           `Disabled polyglot funbox because only one valid language was found. Check your polyglot languages config (${Config.customPolyglot.join(
             ", ",
           )}).`,
-          0,
           {
-            duration: 7,
+            durationMs: 7000,
           },
         );
         throw new WordGenError("");
@@ -743,10 +734,9 @@ const list: Partial<Record<FunboxName, FunboxFunctions>> = {
         const fallbackLanguage =
           languages[0]?.name ?? (allRightToLeft ? "arabic" : "english");
         setConfig("language", fallbackLanguage);
-        Notifications.add(
+        showNoticeNotification(
           `Language direction conflict: switched to ${fallbackLanguage} for consistency.`,
-          0,
-          { duration: 5 },
+          { durationMs: 5000 },
         );
         throw new WordGenError("");
       }

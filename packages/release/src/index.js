@@ -1,5 +1,3 @@
-// idk why its failing to resolve
-// oxlint-disable-next-line import/no-unresolved
 import { Octokit } from "@octokit/rest";
 import { execSync } from "child_process";
 import dotenv from "dotenv";
@@ -38,6 +36,7 @@ const runCommand = (command, force) => {
       process.exit(1);
     }
   }
+  return undefined;
 };
 
 const runProjectRootCommand = (command, force) => {
@@ -56,14 +55,19 @@ const runProjectRootCommand = (command, force) => {
       process.exit(1);
     }
   }
+  return undefined;
 };
 
 const checkBranchSync = () => {
+  if (noSyncCheck) {
+    console.log("Skipping sync check.");
+    return;
+  }
   console.log("Checking if local branch is master...");
   const currentBranch = runProjectRootCommand(
     "git branch --show-current",
   ).trim();
-  if (currentBranch !== "master") {
+  if (currentBranch !== "master" && !isDryRun) {
     console.error(
       "Local branch is not master. Please checkout the master branch.",
     );
@@ -72,32 +76,26 @@ const checkBranchSync = () => {
 
   console.log("Checking if local master branch is in sync with origin...");
 
-  if (noSyncCheck) {
-    console.log("Skipping sync check.");
-  } else if (isDryRun) {
-    console.log("[Dry Run] Checking sync...");
-  } else {
-    try {
-      // Fetch the latest changes from the remote repository
-      runProjectRootCommand("git fetch origin");
+  try {
+    // Fetch the latest changes from the remote repository
+    runProjectRootCommand("git fetch origin");
 
-      // Get the commit hashes of the local and remote master branches
-      const localMaster = runProjectRootCommand("git rev-parse master").trim();
-      const remoteMaster = runProjectRootCommand(
-        "git rev-parse origin/master",
-      ).trim();
+    // Get the commit hashes of the local and remote master branches
+    const localMaster = runProjectRootCommand("git rev-parse master").trim();
+    const remoteMaster = runProjectRootCommand(
+      "git rev-parse origin/master",
+    ).trim();
 
-      if (localMaster !== remoteMaster) {
-        console.error(
-          "Local master branch is not in sync with origin. Please pull the latest changes before proceeding.",
-        );
-        process.exit(1);
-      }
-    } catch (error) {
-      console.error("Error checking branch sync status.");
-      console.error(error);
+    if (localMaster !== remoteMaster && !isDryRun) {
+      console.error(
+        "Local master branch is not in sync with origin. Please pull the latest changes before proceeding.",
+      );
       process.exit(1);
     }
+  } catch (error) {
+    console.error("Error checking branch sync status.");
+    console.error(error);
+    process.exit(1);
   }
 };
 
@@ -156,9 +154,8 @@ const updatePackage = (newVersion) => {
 const checkUncommittedChanges = () => {
   console.log("Checking uncommitted changes...");
   const status = execSync("git status --porcelain").toString().trim();
-  if (isDryRun) {
-    console.log("[Dry Run] Checking uncommitted changes...");
-  } else if (status) {
+
+  if (status && !isDryRun) {
     console.error(
       "You have uncommitted changes. Please commit or stash them before proceeding.",
     );
@@ -168,11 +165,7 @@ const checkUncommittedChanges = () => {
 
 const installDependencies = () => {
   console.log("Installing dependencies...");
-  if (isDryRun) {
-    console.log("[Dry Run] Dependencies would be installed.");
-  } else {
-    runProjectRootCommand("pnpm i");
-  }
+  runProjectRootCommand("pnpm i");
 };
 
 const buildProject = () => {
@@ -222,10 +215,36 @@ const generateChangelog = async () => {
   return changelog;
 };
 
+const generateContributors = () => {
+  console.log("Generating contributors list...");
+  try {
+    const p = path.resolve(__dirname, "./buildContributors.js");
+
+    let contributors = runCommand(`node ${p}`, true);
+
+    contributors = JSON.parse(
+      contributors.replaceAll("\n", "").replace(/^.*?\[/, "["),
+    );
+
+    if (!isDryRun) {
+      fs.writeFileSync(
+        `${PROJECT_ROOT}/frontend/static/contributors.json`,
+        JSON.stringify(contributors, null, 2),
+        "utf8",
+      );
+    }
+
+    console.log("Contributors list updated.");
+  } catch (e) {
+    console.error("Failed to generate contributors list.");
+    console.error(e);
+  }
+};
+
 const createCommitAndTag = (version) => {
   console.log("Creating commit and tag... Pushing to Github...");
   runCommand(`git add .`);
-  runCommand(`git commit -m "chore: release ${version}" --no-verify`);
+  runCommand(`git commit -m "chore: release ${version}"`);
   runCommand(`git tag ${version}`);
   runCommand(`git push origin master --tags --no-verify`);
 };
@@ -263,14 +282,20 @@ const main = async () => {
     const name = readlineSync.question(
       "Enter preview channel name (default: preview): ",
     );
-    // oxlint-disable-next-line prefer-nullish-coalescing
-    const channelName = name.trim() || "preview";
+    let channelName = name.trim();
+
+    if (channelName === "") {
+      channelName = "preview";
+    }
 
     const expirationTime = readlineSync.question(
       "Enter expiration time (e.g., 2h, default: 1d): ",
     );
-    // oxlint-disable-next-line prefer-nullish-coalescing
-    const expires = expirationTime.trim() || "1d";
+    let expires = expirationTime.trim();
+
+    if (expires === "") {
+      expires = "1d";
+    }
 
     console.log(
       `Deploying frontend preview to channel "${channelName}" with expiration "${expires}"...`,
@@ -324,6 +349,7 @@ const main = async () => {
 
   if (!noDeploy) purgeCache();
   if (!hotfix) {
+    generateContributors();
     updatePackage(newVersion);
     createCommitAndTag(newVersion);
     try {

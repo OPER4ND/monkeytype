@@ -1,7 +1,7 @@
 import { getfpsLimit, fpsLimitSchema, setfpsLimit } from "../../anim";
 import { qsr } from "../../utils/dom";
 import { ValidatedHtmlInputElement } from "../input-validation";
-import * as Notifications from "../notifications";
+import { showNoticeNotification } from "../../states/notifications";
 
 const section = qsr("#pageSettings .section.fpsLimit");
 
@@ -27,8 +27,8 @@ export function update(): void {
 }
 
 function save(value: number): void {
-  if (setfpsLimit(value)) {
-    Notifications.add("FPS limit updated", 0);
+  if (getfpsLimit() !== value && setfpsLimit(value)) {
+    showNoticeNotification("FPS limit updated");
   }
   update();
 }

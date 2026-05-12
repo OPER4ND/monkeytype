@@ -1,27 +1,24 @@
 import * as Focus from "../test/focus";
 import * as CommandlineLists from "./lists";
-import Config from "../config";
+import { Config } from "../config/store";
 import * as AnalyticsController from "../controllers/analytics-controller";
 import * as ThemeController from "../controllers/theme-controller";
 import { clearFontPreview } from "../ui";
 import AnimatedModal, { ShowOptions } from "../utils/animated-modal";
-import * as Notifications from "../elements/notifications";
+import { showNoticeNotification } from "../states/notifications";
 import * as OutOfFocus from "../test/out-of-focus";
 import {
   getActivePage,
   getCommandlineSubgroup,
   setCommandlineSubgroup,
-} from "../signals/core";
-import { showLoaderBar, hideLoaderBar } from "../signals/loader-bar";
+} from "../states/core";
+import { showLoaderBar, hideLoaderBar } from "../states/loader-bar";
 import { Command, CommandsSubgroup, CommandWithValidation } from "./types";
 import { areSortedArraysEqual, areUnsortedArraysEqual } from "../utils/arrays";
 import { parseIntOptional } from "../utils/numbers";
 import { debounce } from "throttle-debounce";
 import { intersect } from "@monkeytype/util/arrays";
-import {
-  createInputEventHandler,
-  ValidationResult,
-} from "../elements/input-validation";
+import { createInputEventHandler } from "../elements/input-validation";
 import { isInputElementFocused } from "../input/input-element";
 import { qs } from "../utils/dom";
 import { ConfigKey } from "@monkeytype/schemas/configs";
@@ -31,7 +28,8 @@ import {
   hideModal as storeHideModal,
   hideModalAndClearChain as storeClearChain,
   isModalOpen,
-} from "../stores/modals";
+} from "../states/modals";
+import { ValidationResult } from "../types/validation";
 
 type CommandlineMode = "search" | "input";
 type InputModeParams = {
@@ -125,15 +123,14 @@ export function show(
           if (exists) {
             showLoaderBar();
             subgroupOverride = await CommandlineLists.getList(
-              overrideStringOrGroup,
+              overrideStringOrGroup as CommandlineLists.ListsObjectKeys,
             );
             hideLoaderBar();
           } else {
             subgroupOverride = null;
             usingSingleList = Config.singleListCommandLine === "on";
-            Notifications.add(
+            showNoticeNotification(
               `Command list ${overrideStringOrGroup} not found`,
-              0,
             );
           }
         } else {
@@ -152,11 +149,12 @@ export function show(
           (c) => c.id === settings.commandOverride,
         );
         if (command === undefined) {
-          Notifications.add(`Command ${settings.commandOverride} not found`, 0);
+          showNoticeNotification(
+            `Command ${settings.commandOverride} not found`,
+          );
         } else if (command?.input !== true) {
-          Notifications.add(
+          showNoticeNotification(
             `Command ${settings.commandOverride} is not an input command`,
-            0,
           );
         } else {
           showInputCommand = command;
@@ -174,6 +172,7 @@ export function show(
       await showCommands();
       await updateActiveCommand();
       setTimeout(() => {
+        lastActiveIndex = undefined;
         keepActiveCommandInView();
         if (showInputCommand) {
           const escaped =
@@ -490,6 +489,11 @@ async function showCommands(): Promise<void> {
 
   for (const command of list) {
     if (command.found !== true) continue;
+
+    if (command.isActive && firstActive === null && inputValue === "") {
+      firstActive = index;
+    }
+
     let customStyle = "";
     if (command.customStyle !== undefined && command.customStyle !== "") {
       customStyle = command.customStyle;

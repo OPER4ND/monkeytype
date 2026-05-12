@@ -1,11 +1,12 @@
 import { Command } from "../types";
 import { buildCommandForConfigKey } from "../util";
 import FileStorage from "../../utils/file-storage";
-import { applyFontFamily } from "../../controllers/theme-controller";
-import { updateUI } from "../../elements/settings/custom-font-picker";
-import * as Notifications from "../../elements/notifications";
-import Config, { setConfig } from "../../config";
 
+import { updateUI } from "../../elements/settings/custom-font-picker";
+import { showNoticeNotification } from "../../states/notifications";
+import { Config } from "../../config/store";
+import { setConfig } from "../../config/setters";
+import { applyFontFamily } from "../../ui";
 const fromMeta = buildCommandForConfigKey("fontFamily");
 
 if (fromMeta.subgroup) {
@@ -60,12 +61,11 @@ if (fromMeta.subgroup) {
 
               // check type
               if (
-                !file.type.match(/font\/(woff|woff2|ttf|otf)/) &&
-                !file.name.match(/\.(woff|woff2|ttf|otf)$/i)
+                !/font\/(woff|woff2|ttf|otf)/.exec(file.type) &&
+                !/\.(woff|woff2|ttf|otf)$/i.exec(file.name)
               ) {
-                Notifications.add(
+                showNoticeNotification(
                   "Unsupported font format, must be woff, woff2, ttf or otf.",
-                  0,
                 );
                 cleanup();
                 return;
@@ -79,9 +79,8 @@ if (fromMeta.subgroup) {
                   await applyFontFamily();
                   await updateUI();
                 } catch (e) {
-                  Notifications.add(
+                  showNoticeNotification(
                     "Error uploading font: " + (e as Error).message,
-                    0,
                   );
                 }
                 cleanup();
@@ -106,9 +105,8 @@ if (fromMeta.subgroup) {
               await updateUI();
               await applyFontFamily();
             } catch (e) {
-              Notifications.add(
+              showNoticeNotification(
                 "Error removing font: " + (e as Error).message,
-                0,
               );
             }
           },

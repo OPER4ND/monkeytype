@@ -11,7 +11,7 @@ import { onBeforeInsertText } from "../handlers/before-insert-text";
 import { onBeforeDelete } from "../handlers/before-delete";
 import * as TestInput from "../../test/test-input";
 import * as TestWords from "../../test/test-words";
-import * as CompositionState from "../../states/composition";
+import * as CompositionState from "../../legacy-states/composition";
 import { activeWordIndex } from "../../test/test-state";
 import { areAllTestWordsGenerated } from "../../test/test-logic";
 
@@ -75,6 +75,8 @@ inputEl.addEventListener("input", async (event) => {
   if (!(event instanceof InputEvent)) {
     //since the listener is on an input element, this should never trigger
     //but its here to narrow the type of "event"
+    //@ts-expect-error type narrowing
+    // oxlint-disable-next-line typescript/no-unsafe-call
     event.preventDefault();
     return;
   }
@@ -123,7 +125,7 @@ inputEl.addEventListener("input", async (event) => {
     const inputPlusComposition =
       TestInput.input.current + (CompositionState.getData() ?? "");
     const inputPlusCompositionIsCorrect =
-      TestWords.words.getCurrent() === inputPlusComposition;
+      TestWords.words.getCurrentText() === inputPlusComposition;
 
     // composition quick end
     // if the user typed the entire word correctly but is still in composition

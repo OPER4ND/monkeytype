@@ -1,17 +1,24 @@
 //TODO: use Format
 import { Chart, type PluginChartOptions } from "chart.js";
-import Config, { setConfig } from "../config";
+
+import { Config } from "../config/store";
+import { setConfig } from "../config/setters";
 import * as AdController from "../controllers/ad-controller";
 import * as ChartController from "../controllers/chart-controller";
 import QuotesController, { Quote } from "../controllers/quotes-controller";
 import * as DB from "../db";
 
-import { showLoaderBar, hideLoaderBar } from "../signals/loader-bar";
-import * as Notifications from "../elements/notifications";
-import { isAuthenticated } from "../firebase";
-import * as quoteRateModal from "../modals/quote-rate";
-import * as GlarsesMode from "../states/glarses-mode";
-import * as SlowTimer from "../states/slow-timer";
+import { showLoaderBar, hideLoaderBar } from "../states/loader-bar";
+import {
+  showNoticeNotification,
+  showErrorNotification,
+  showSuccessNotification,
+  addNotificationWithLevel,
+} from "../states/notifications";
+import { isAuthenticated } from "../states/core";
+import { getQuoteStats } from "../states/quote-rate";
+import * as GlarsesMode from "../legacy-states/glarses-mode";
+import * as SlowTimer from "../legacy-states/slow-timer";
 import * as DateTime from "../utils/date-and-time";
 import * as Misc from "../utils/misc";
 import * as Strings from "../utils/strings";
@@ -19,17 +26,16 @@ import * as Numbers from "@monkeytype/util/numbers";
 import * as Arrays from "../utils/arrays";
 import { get as getTypingSpeedUnit } from "../utils/typing-speed-units";
 import * as PbCrown from "./pb-crown";
-import * as TestConfig from "./test-config";
 import * as TestInput from "./test-input";
 import * as TestStats from "./test-stats";
 import * as TestUI from "./test-ui";
 import * as TodayTracker from "./today-tracker";
-import * as ConfigEvent from "../observables/config-event";
+import { configEvent } from "../events/config";
 import * as Focus from "./focus";
 import * as CustomText from "./custom-text";
-import * as CustomTextState from "./../states/custom-text-name";
+import * as CustomTextState from "./../legacy-states/custom-text-name";
 import * as Funbox from "./funbox/funbox";
-import Format from "../utils/format";
+import Format from "../singletons/format";
 import confetti from "canvas-confetti";
 import type {
   AnnotationOptions,
@@ -39,17 +45,22 @@ import Ape from "../ape";
 import { CompletedEvent } from "@monkeytype/schemas/results";
 import { getActiveFunboxes, isFunboxActiveWithProperty } from "./funbox/list";
 import { getFunbox } from "@monkeytype/funbox";
-import { SnapshotUserTag } from "../constants/default-snapshot";
+import {
+  getLocalTagPB,
+  saveLocalTagPB,
+  type TagItem,
+  __nonReactive,
+} from "../collections/tags";
 import { Language } from "@monkeytype/schemas/languages";
 import { canQuickRestart as canQuickRestartFn } from "../utils/quick-restart";
 import { LocalStorageWithSchema } from "../utils/local-storage-with-schema";
 import { z } from "zod";
 import * as TestState from "./test-state";
 import { blurInputElement } from "../input/input-element";
-import * as ConnectionState from "../states/connection";
+import * as ConnectionState from "../legacy-states/connection";
 import { currentQuote } from "./test-words";
 import { qs, qsa } from "../utils/dom";
-import { getTheme } from "../signals/theme";
+import { getTheme } from "../states/theme";
 
 let result: CompletedEvent;
 let minChartVal: number;
@@ -63,7 +74,7 @@ let quoteId = "";
 
 export function toggleSmoothedBurst(): void {
   useSmoothedBurst = !useSmoothedBurst;
-  Notifications.add(useSmoothedBurst ? "on" : "off", 1);
+  showSuccessNotification(useSmoothedBurst ? "on" : "off");
   if (TestState.resultVisible) {
     void updateChartData().then(() => {
       ChartController.result.update("resize");
@@ -73,7 +84,7 @@ export function toggleSmoothedBurst(): void {
 
 export function toggleUserFakeChartData(): void {
   useFakeChartData = !useFakeChartData;
-  Notifications.add(useFakeChartData ? "on" : "off", 1);
+  showSuccessNotification(useFakeChartData ? "on" : "off");
   if (TestState.resultVisible) {
     void updateChartData().then(() => {
       ChartController.result.update("resize");
@@ -107,7 +118,7 @@ async function updateChartData(): Promise<void> {
   }
 
   const chartData1 = [
-    ...result.chartData["wpm"].map((a) =>
+    ...result.chartData.wpm.map((a) =>
       Numbers.roundTo2(typingSpeedUnit.fromWpm(a)),
     ),
   ];
@@ -118,9 +129,9 @@ async function updateChartData(): Promise<void> {
     ),
   ];
 
-  const valueWindow = Math.max(...result.chartData["burst"]) * 0.25;
+  const valueWindow = Math.max(...result.chartData.burst) * 0.25;
   let smoothedBurst = Arrays.smoothWithValueWindow(
-    result.chartData["burst"],
+    result.chartData.burst,
     1,
     useSmoothedBurst ? valueWindow : 0,
   );
@@ -223,19 +234,19 @@ function applyFakeChartData(): void {
   const typingSpeedUnit = getTypingSpeedUnit(Config.typingSpeedUnit);
 
   const chartData1 = [
-    ...fakeChartData["wpm"].map((a) =>
+    ...fakeChartData.wpm.map((a) =>
       Numbers.roundTo2(typingSpeedUnit.fromWpm(a)),
     ),
   ];
 
   const chartData2 = [
-    ...fakeChartData["raw"].map((a) =>
+    ...fakeChartData.raw.map((a) =>
       Numbers.roundTo2(typingSpeedUnit.fromWpm(a)),
     ),
   ];
 
   const chartData3 = [
-    ...fakeChartData["burst"].map((a) =>
+    ...fakeChartData.burst.map((a) =>
       Numbers.roundTo2(typingSpeedUnit.fromWpm(a)),
     ),
   ];
@@ -426,7 +437,7 @@ function updateConsistency(): void {
 
 function updateTime(): void {
   const afkSecondsPercent = Numbers.roundTo2(
-    (result.afkDuration / result.testDuration) * 100,
+    (result.afkDuration / result.testDuration) * 100 || 0,
   );
   qs("#result .stats .time .bottom .afk")?.setText("");
   if (afkSecondsPercent > 0) {
@@ -656,15 +667,8 @@ export function showConfetti(): void {
 }
 
 async function updateTags(dontSave: boolean): Promise<void> {
-  const activeTags: SnapshotUserTag[] = [];
-  const userTagsCount = DB.getSnapshot()?.tags?.length ?? 0;
-  try {
-    DB.getSnapshot()?.tags?.forEach((tag) => {
-      if (tag.active === true) {
-        activeTags.push(tag);
-      }
-    });
-  } catch (e) {}
+  const activeTags: TagItem[] = __nonReactive.getActiveTags();
+  const userTagsCount = __nonReactive.getTags().length;
 
   if (userTagsCount === 0) {
     qs("#result .stats .tags")?.hide();
@@ -691,7 +695,7 @@ async function updateTags(dontSave: boolean): Promise<void> {
   let annotationSide: LabelPosition = "start";
   let labelAdjust = 15;
   for (const tag of activeTags) {
-    const tpb = await DB.getLocalTagPB(
+    const tpb = getLocalTagPB(
       tag._id,
       Config.mode,
       result.mode2,
@@ -702,7 +706,7 @@ async function updateTags(dontSave: boolean): Promise<void> {
       Config.lazyMode,
     );
     qs("#result .stats .tags .bottom")?.appendHtml(`
-      <div tagid="${tag._id}" aria-label="PB: ${tpb}" data-balloon-pos="up">${tag.display}<i class="fas fa-crown hidden"></i></div>
+      <div tagid="${tag._id}" aria-label="PB: ${tpb}" data-balloon-pos="up">${tag.name}<i class="fas fa-crown hidden"></i></div>
     `);
     const typingSpeedUnit = getTypingSpeedUnit(Config.typingSpeedUnit);
     if (
@@ -712,7 +716,7 @@ async function updateTags(dontSave: boolean): Promise<void> {
     ) {
       if (tpb < result.wpm) {
         //new pb for that tag
-        await DB.saveLocalTagPB(
+        saveLocalTagPB(
           tag._id,
           Config.mode,
           result.mode2,
@@ -757,7 +761,7 @@ async function updateTags(dontSave: boolean): Promise<void> {
             position: annotationSide,
             xAdjust: labelAdjust,
             display: true,
-            content: `${tag.display} PB: ${Numbers.roundTo2(
+            content: `${tag.name} PB: ${Numbers.roundTo2(
               typingSpeedUnit.fromWpm(tpb),
             ).toFixed(2)}`,
           },
@@ -895,8 +899,7 @@ export function updateRateQuote(randomQuote: Quote | null): void {
         ?.removeClass("far")
         ?.addClass("fas");
     }
-    quoteRateModal
-      .getQuoteStats(randomQuote)
+    getQuoteStats(randomQuote)
       .then((quoteStats) => {
         qs(".pageTest #result #rateQuoteButton .rating")?.setText(
           quoteStats?.average?.toFixed(1) ?? "",
@@ -1078,14 +1081,13 @@ export async function update(
     ];
 
     showConfetti();
-    Notifications.add(Arrays.randomElementFromArray(messages), 0, {
+    showNoticeNotification(Arrays.randomElementFromArray(messages), {
       customTitle: "Nice",
-      duration: 15,
+      durationMs: 15000,
       important: true,
     });
   }
 
-  TestConfig.hide();
   Focus.set(false);
 
   const canQuickRestart = canQuickRestartFn(
@@ -1264,11 +1266,10 @@ export function updateTagsAfterEdit(
 
   if (tagIds.length > 0) {
     for (const tag of tagIds) {
-      DB.getSnapshot()?.tags?.forEach((snaptag) => {
-        if (tag === snaptag._id) {
-          tagNames.push(snaptag.display);
-        }
-      });
+      const localTag = __nonReactive.getTag(tag);
+      if (localTag !== undefined) {
+        tagNames.push(localTag.name);
+      }
     }
   }
 
@@ -1344,7 +1345,7 @@ qsa(".pageTest #result .chart .chartLegend button")?.on(
 
 qs(".pageTest #favoriteQuoteButton")?.on("click", async () => {
   if (quoteLang === undefined || quoteId === "") {
-    Notifications.add("Could not get quote stats!", -1);
+    showErrorNotification("Could not get quote stats!");
     return;
   }
 
@@ -1363,7 +1364,10 @@ qs(".pageTest #favoriteQuoteButton")?.on("click", async () => {
     });
     hideLoaderBar();
 
-    Notifications.add(response.body.message, response.status === 200 ? 1 : -1);
+    addNotificationWithLevel(
+      response.body.message,
+      response.status === 200 ? "success" : "error",
+    );
 
     if (response.status === 200) {
       $button?.removeClass("fas")?.addClass("far");
@@ -1380,7 +1384,10 @@ qs(".pageTest #favoriteQuoteButton")?.on("click", async () => {
     });
     hideLoaderBar();
 
-    Notifications.add(response.body.message, response.status === 200 ? 1 : -1);
+    addNotificationWithLevel(
+      response.body.message,
+      response.status === 200 ? "success" : "error",
+    );
 
     if (response.status === 200) {
       $button?.removeClass("far")?.addClass("fas");
@@ -1391,7 +1398,7 @@ qs(".pageTest #favoriteQuoteButton")?.on("click", async () => {
   }
 });
 
-ConfigEvent.subscribe(async ({ key }) => {
+configEvent.subscribe(async ({ key }) => {
   if (
     ["typingSpeedUnit", "startGraphsAtZero"].includes(key) &&
     TestState.resultVisible

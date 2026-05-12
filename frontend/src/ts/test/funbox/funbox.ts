@@ -1,30 +1,30 @@
-import * as Notifications from "../../elements/notifications";
-import * as Misc from "../../utils/misc";
+import {
+  showNoticeNotification,
+  showErrorNotification,
+} from "../../states/notifications";
 import * as JSONData from "../../utils/json-data";
 import * as Strings from "../../utils/strings";
-import * as ManualRestart from "../manual-restart-tracker";
-import Config, {
-  setConfig,
+import { Config } from "../../config/store";
+import {
   toggleFunbox as configToggleFunbox,
-} from "../../config";
+  setConfig,
+} from "../../config/setters";
 import * as MemoryTimer from "./memory-funbox-timer";
 import * as FunboxMemory from "./funbox-memory";
 import { HighlightMode, FunboxName } from "@monkeytype/schemas/configs";
 import { Mode } from "@monkeytype/schemas/shared";
-import { checkCompatibility } from "@monkeytype/funbox";
+import { checkCompatibility, checkForcedConfig } from "@monkeytype/funbox";
 import {
   getAllFunboxes,
   getActiveFunboxes,
   getActiveFunboxNames,
-  get,
   getActiveFunboxesWithFunction,
   isFunboxActiveWithProperty,
   getActiveFunboxesWithProperty,
 } from "./list";
-import { checkForcedConfig } from "./funbox-validation";
 import { tryCatch } from "@monkeytype/util/trycatch";
-import { qs } from "../../utils/dom";
-import * as ConfigEvent from "../../observables/config-event";
+import { qs, qsa } from "../../utils/dom";
+import { configEvent } from "../../events/config";
 
 export function toggleScript(...params: string[]): void {
   if (Config.funbox.length === 0) return;
@@ -35,11 +35,6 @@ export function toggleScript(...params: string[]): void {
 }
 
 export function setFunbox(funbox: FunboxName[]): boolean {
-  if (funbox.length === 0) {
-    for (const fb of getActiveFunboxesWithFunction("clearGlobal")) {
-      fb.functions.clearGlobal();
-    }
-  }
   FunboxMemory.load();
   setConfig("funbox", funbox);
   return true;
@@ -50,22 +45,15 @@ export function toggleFunbox(funbox: FunboxName): void {
     !checkCompatibility(getActiveFunboxNames(), funbox) &&
     !Config.funbox.includes(funbox)
   ) {
-    Notifications.add(
+    showNoticeNotification(
       `${Strings.capitalizeFirstLetter(
         funbox.replace(/_/g, " "),
       )} funbox is not compatible with the current funbox selection`,
-      0,
     );
     return;
   }
   FunboxMemory.load();
   configToggleFunbox(funbox, false);
-
-  if (!getActiveFunboxNames().includes(funbox)) {
-    get(funbox).functions?.clearGlobal?.();
-  } else {
-    get(funbox).functions?.applyGlobalCSS?.();
-  }
 }
 
 export async function clear(): Promise<boolean> {
@@ -78,11 +66,10 @@ export async function clear(): Promise<boolean> {
       ?.join(" ") ?? "",
   );
 
-  qs(".funBoxTheme")?.remove();
+  qsa(".funBoxTheme").remove();
 
   qs("#wordsWrapper")?.show();
   MemoryTimer.reset();
-  ManualRestart.set();
   return true;
 }
 
@@ -98,14 +85,10 @@ export async function activate(
   // The configuration might be edited with dev tools,
   // so we need to double check its validity
   if (!checkCompatibility(getActiveFunboxNames())) {
-    Notifications.add(
-      Misc.createErrorMessage(
-        undefined,
-        `Failed to activate funbox: funboxes ${Config.funbox
-          .map((it) => it.replace(/_/g, " "))
-          .join(", ")} are not compatible`,
-      ),
-      -1,
+    showErrorNotification(
+      `Failed to activate funbox: funboxes ${Config.funbox
+        .map((it) => it.replace(/_/g, " "))
+        .join(", ")} are not compatible`,
     );
     setConfig("funbox", [], {
       nosave: true,
@@ -124,10 +107,7 @@ export async function activate(
     JSONData.getCurrentLanguage(Config.language),
   );
   if (error) {
-    Notifications.add(
-      Misc.createErrorMessage(error, "Failed to activate funbox"),
-      -1,
-    );
+    showErrorNotification("Failed to activate funbox", { error });
     setConfig("funbox", [], {
       nosave: true,
     });
@@ -137,9 +117,8 @@ export async function activate(
 
   if (language.ligatures) {
     if (isFunboxActiveWithProperty("noLigatures")) {
-      Notifications.add(
+      showNoticeNotification(
         "Current language does not support this funbox mode",
-        0,
       );
       setConfig("funbox", [], {
         nosave: true,
@@ -187,14 +166,12 @@ export async function activate(
 
   if (!canSetSoFar) {
     if (Config.funbox.length > 1) {
-      Notifications.add(
+      showErrorNotification(
         `Failed to activate funboxes ${Config.funbox}: no intersecting forced configs. Disabling funbox`,
-        -1,
       );
     } else {
-      Notifications.add(
+      showErrorNotification(
         `Failed to activate funbox ${Config.funbox}: no forced configs. Disabling funbox`,
-        -1,
       );
     }
     setConfig("funbox", [], {
@@ -204,7 +181,6 @@ export async function activate(
     return;
   }
 
-  ManualRestart.set();
   for (const fb of getActiveFunboxesWithFunction("applyConfig")) {
     fb.functions.applyConfig();
   }
@@ -244,7 +220,7 @@ async function setFunboxBodyClasses(): Promise<boolean> {
 }
 
 async function applyFunboxCSS(): Promise<boolean> {
-  qs(".funBoxTheme")?.remove();
+  qsa(".funBoxTheme").remove();
   for (const funbox of getActiveFunboxesWithProperty("hasCssFile")) {
     const css = document.createElement("link");
     css.classList.add("funBoxTheme");
@@ -255,7 +231,7 @@ async function applyFunboxCSS(): Promise<boolean> {
   return true;
 }
 
-ConfigEvent.subscribe(async ({ key }) => {
+configEvent.subscribe(async ({ key }) => {
   if (key === "funbox") {
     const active = getActiveFunboxNames();
     getAllFunboxes()

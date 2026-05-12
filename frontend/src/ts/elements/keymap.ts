@@ -1,11 +1,11 @@
-import Config from "../config";
-import * as ConfigEvent from "../observables/config-event";
-import * as KeymapEvent from "../observables/keymap-event";
+import { Config } from "../config/store";
+import { configEvent } from "../events/config";
+import { keymapEvent } from "../events/keymap";
 import * as Misc from "../utils/misc";
 import * as JSONData from "../utils/json-data";
 import * as Hangul from "hangul-js";
-import * as Notifications from "../elements/notifications";
-import { getActivePage } from "../signals/core";
+import { showErrorNotification } from "../states/notifications";
+import { getActivePage } from "../states/core";
 import * as TestWords from "../test/test-words";
 import { capsState } from "../test/caps-warning";
 import * as ShiftTracker from "../test/shift-tracker";
@@ -17,7 +17,7 @@ import { LayoutObject } from "@monkeytype/schemas/layouts";
 import { animate } from "animejs";
 import { ElementsWithUtils, qsr } from "../utils/dom";
 import { requestDebouncedAnimationFrame } from "../utils/debounced-animation-frame";
-import { getTheme } from "../signals/theme";
+import { getTheme } from "../states/theme";
 
 import { createEffectOn } from "../hooks/effects";
 
@@ -148,11 +148,11 @@ async function flashKey(key: string, correct?: boolean): Promise<void> {
 }
 
 export function hide(): void {
-  keymap.addClass("hidden");
+  keymap.hide();
 }
 
 export function show(): void {
-  keymap.removeClass("hidden");
+  keymap.show();
 }
 
 function buildRow(options: {
@@ -424,10 +424,9 @@ export async function refresh(): Promise<void> {
         layoutNameDisplayString = Config.keymapLayout;
       }
     } catch (e) {
-      Notifications.add(
-        Misc.createErrorMessage(e, `Failed to load keymap ${layoutName}`),
-        -1,
-      );
+      showErrorNotification(`Failed to load keymap ${layoutName}`, {
+        error: e,
+      });
       return;
     }
 
@@ -560,7 +559,7 @@ async function updateLegends(): Promise<void> {
 
   const layout = await JSONData.getLayout(layoutName).catch(() => undefined);
   if (layout === undefined) {
-    Notifications.add("Failed to load keymap layout", -1);
+    showErrorNotification("Failed to load keymap layout");
 
     return;
   }
@@ -602,7 +601,7 @@ async function updateLegends(): Promise<void> {
 }
 let ignoreConfigEvent = false;
 
-ConfigEvent.subscribe(({ key }) => {
+configEvent.subscribe(({ key }) => {
   const handleMode = (): void => {
     keymap.qsa(".activeKey").removeClass("activeKey");
     keymap.qsa(".keymapKey").setAttribute("style", "");
@@ -673,7 +672,7 @@ ConfigEvent.subscribe(({ key }) => {
   }
 });
 
-KeymapEvent.subscribe((mode, key, correct) => {
+keymapEvent.subscribe(({ mode, key, correct }) => {
   if (mode === "highlight") {
     highlightKey(key);
   }

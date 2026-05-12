@@ -3,7 +3,7 @@ import * as CookiesModal from "../modals/cookies";
 import * as EditPresetPopup from "../modals/edit-preset";
 import * as EditTagPopup from "../modals/edit-tag";
 
-import * as Notifications from "../elements/notifications";
+import { showErrorNotification } from "../states/notifications";
 import { qs } from "../utils/dom";
 
 const settingsPage = qs("#pageSettings");
@@ -24,7 +24,7 @@ settingsPage?.qs(".section.presets")?.on("click", (e) => {
     EditPresetPopup.show("add");
   } else if (target.classList.contains("editButton")) {
     const presetid = target.parentElement?.getAttribute("data-id");
-    const name = target.parentElement?.getAttribute("data-display");
+    const name = target.parentElement?.getAttribute("data-name");
     if (
       presetid === undefined ||
       name === undefined ||
@@ -33,16 +33,15 @@ settingsPage?.qs(".section.presets")?.on("click", (e) => {
       presetid === null ||
       name === null
     ) {
-      Notifications.add(
+      showErrorNotification(
         "Failed to edit preset: Could not find preset id or name",
-        -1,
       );
       return;
     }
     EditPresetPopup.show("edit", presetid, name);
   } else if (target.classList.contains("removeButton")) {
     const presetid = target.parentElement?.getAttribute("data-id");
-    const name = target.parentElement?.getAttribute("data-display");
+    const name = target.parentElement?.getAttribute("data-name");
     if (
       presetid === undefined ||
       name === undefined ||
@@ -51,9 +50,8 @@ settingsPage?.qs(".section.presets")?.on("click", (e) => {
       presetid === null ||
       name === null
     ) {
-      Notifications.add(
+      showErrorNotification(
         "Failed to remove preset: Could not find preset id or name",
-        -1,
       );
       return;
     }
@@ -67,57 +65,24 @@ settingsPage?.qs(".section.tags")?.on("click", (e) => {
     EditTagPopup.show("add");
   } else if (target.classList.contains("editButton")) {
     const tagid = target.parentElement?.getAttribute("data-id");
-    const name = target.parentElement?.getAttribute("data-display");
-    if (
-      tagid === undefined ||
-      name === undefined ||
-      tagid === "" ||
-      name === "" ||
-      tagid === null ||
-      name === null
-    ) {
-      Notifications.add(
-        "Failed to edit tag: Could not find tag id or name",
-        -1,
-      );
+    if (tagid === undefined || tagid === "" || tagid === null) {
+      showErrorNotification("Failed to edit tag: Could not find tag id");
       return;
     }
-    EditTagPopup.show("edit", tagid, name);
+    EditTagPopup.show("edit", tagid);
   } else if (target.classList.contains("clearPbButton")) {
     const tagid = target.parentElement?.getAttribute("data-id");
-    const name = target.parentElement?.getAttribute("data-display");
-    if (
-      tagid === undefined ||
-      name === undefined ||
-      tagid === "" ||
-      name === "" ||
-      tagid === null ||
-      name === null
-    ) {
-      Notifications.add(
-        "Failed to clear tag PB: Could not find tag id or name",
-        -1,
-      );
+    if (tagid === undefined || tagid === "" || tagid === null) {
+      showErrorNotification("Failed to clear tag PB: Could not find tag id");
       return;
     }
-    EditTagPopup.show("clearPb", tagid, name);
+    EditTagPopup.show("clearPb", tagid);
   } else if (target.classList.contains("removeButton")) {
     const tagid = target.parentElement?.getAttribute("data-id");
-    const name = target.parentElement?.getAttribute("data-display");
-    if (
-      tagid === undefined ||
-      name === undefined ||
-      tagid === "" ||
-      name === "" ||
-      tagid === null ||
-      name === null
-    ) {
-      Notifications.add(
-        "Failed to remove tag: Could not find tag id or name",
-        -1,
-      );
+    if (tagid === undefined || tagid === "" || tagid === null) {
+      showErrorNotification("Failed to remove tag: Could not find tag id");
       return;
     }
-    EditTagPopup.show("remove", tagid, name);
+    EditTagPopup.show("remove", tagid);
   }
 });

@@ -1,6 +1,6 @@
-import * as Notifications from "../elements/notifications";
+import { showErrorNotification } from "../states/notifications";
 import { ShowOptions } from "../utils/animated-modal";
-import { SimpleModal } from "../utils/simple-modal";
+import { SimpleModal } from "../elements/simple-modal";
 
 export type PopupKey =
   | "updateEmail"
@@ -19,13 +19,9 @@ export type PopupKey =
   | "revokeAllTokens"
   | "unlinkDiscord"
   | "editApeKey"
-  | "deleteCustomText"
-  | "deleteCustomTextLong"
-  | "resetProgressCustomTextLong"
   | "updateCustomTheme"
   | "deleteCustomTheme"
-  | "devGenerateData"
-  | "lbGoToPage";
+  | "devGenerateData";
 
 export const list: Record<PopupKey, SimpleModal | undefined> = {
   updateEmail: undefined,
@@ -44,13 +40,9 @@ export const list: Record<PopupKey, SimpleModal | undefined> = {
   revokeAllTokens: undefined,
   unlinkDiscord: undefined,
   editApeKey: undefined,
-  deleteCustomText: undefined,
-  deleteCustomTextLong: undefined,
-  resetProgressCustomTextLong: undefined,
   updateCustomTheme: undefined,
   deleteCustomTheme: undefined,
   devGenerateData: undefined,
-  lbGoToPage: undefined,
 };
 
 export function showPopup(
@@ -60,7 +52,7 @@ export function showPopup(
 ): void {
   const popup = list[key];
   if (popup === undefined) {
-    Notifications.add("Failed to show popup - popup is not defined", -1);
+    showErrorNotification("Failed to show popup - popup is not defined");
     return;
   }
   popup.show(showParams, showOptions);

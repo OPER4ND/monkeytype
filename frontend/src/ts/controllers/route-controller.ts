@@ -1,11 +1,13 @@
 import * as PageController from "./page-controller";
 import * as TestUI from "../test/test-ui";
-import * as PageTransition from "../states/page-transition";
-import { isAuthAvailable, isAuthenticated } from "../firebase";
+import * as PageTransition from "../legacy-states/page-transition";
+import { isAuthAvailable } from "../firebase";
+import { isAuthenticated } from "../states/core";
 import { isFunboxActive } from "../test/funbox/list";
 import * as TestState from "../test/test-state";
-import * as Notifications from "../elements/notifications";
-import * as NavigationEvent from "../observables/navigation-event";
+import { showNoticeNotification } from "../states/notifications";
+import { navigationEvent, type NavigateOptions } from "../events/navigation";
+import { authEvent } from "../events/auth";
 
 //source: https://www.youtube.com/watch?v=OstALBk-jTc
 // https://www.youtube.com/watch?v=OstALBk-jTc
@@ -33,7 +35,7 @@ type Route = {
   path: string;
   load: (
     params: Record<string, string>,
-    navigateOptions: NavigationEvent.NavigateOptions,
+    navigateOptions: NavigateOptions,
   ) => Promise<void>;
 };
 
@@ -158,7 +160,7 @@ export async function navigate(
   url = window.location.pathname +
     window.location.search +
     window.location.hash,
-  options = {} as NavigationEvent.NavigateOptions,
+  options = {} as NavigateOptions,
 ): Promise<void> {
   if (
     !options.force &&
@@ -178,9 +180,12 @@ export async function navigate(
 
   const noQuit = isFunboxActive("no_quit");
   if (TestState.isActive && noQuit) {
-    Notifications.add("No quit funbox is active. Please finish the test.", 0, {
-      important: true,
-    });
+    showNoticeNotification(
+      "No quit funbox is active. Please finish the test.",
+      {
+        important: true,
+      },
+    );
     //todo: figure out if this was ever used
     // event?.preventDefault();
     return;
@@ -203,9 +208,7 @@ export async function navigate(
   await router(options);
 }
 
-async function router(
-  options = {} as NavigationEvent.NavigateOptions,
-): Promise<void> {
+async function router(options = {} as NavigateOptions): Promise<void> {
   const matches = routes.map((r) => {
     return {
       route: r,
@@ -245,6 +248,39 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 });
 
-NavigationEvent.subscribe((url, options) => {
+navigationEvent.subscribe(({ url, options }) => {
   void navigate(url, options);
+});
+
+authEvent.subscribe((event) => {
+  if (event.type === "authStateChanged") {
+    let keyframes = [
+      {
+        percentage: 90,
+        durationMs: 1000,
+        text: "Downloading user data...",
+      },
+    ];
+
+    //undefined means navigate to whatever the current window.location.pathname is
+    void navigate(undefined, {
+      force: true,
+      loadingOptions: {
+        loadingMode: () => {
+          if (event.data.isUserSignedIn) {
+            return "sync";
+          } else {
+            return "none";
+          }
+        },
+        loadingPromise: async () => {
+          await event.data.loadPromise;
+        },
+        style: "bar",
+        keyframes: keyframes,
+      },
+    }).finally(() => {
+      document.body.classList.remove("loading");
+    });
+  }
 });

@@ -2,19 +2,21 @@ import * as DB from "../db";
 import * as ServerConfiguration from "../ape/server-configuration";
 import { blendTwoHexColors } from "../utils/colors";
 import { mapRange } from "@monkeytype/util/numbers";
-import { getTheme } from "../signals/theme";
+import { getTheme } from "../states/theme";
 import { qs } from "../utils/dom";
 
+//TODO
 export function hide(): void {
-  qs(".pageAccount .resultBatches")?.addClass("hidden");
+  qs(".pageAccount .resultBatches")?.hide();
 }
 
 export function show(): void {
-  qs(".pageAccount .resultBatches")?.removeClass("hidden");
+  qs(".pageAccount .resultBatches")?.show();
 }
 
 export async function update(): Promise<void> {
-  const results = DB.getSnapshot()?.results;
+  //TODO fix or delete?
+  const results: string[] | undefined = [];
 
   if (results === undefined) {
     console.error(

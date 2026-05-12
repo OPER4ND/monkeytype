@@ -1,10 +1,12 @@
 import * as TestWords from "./test-words";
-import * as Notifications from "../elements/notifications";
-import Config, { setConfig } from "../config";
+import { showNoticeNotification } from "../states/notifications";
+
+import { Config } from "../config/store";
+import { setConfig } from "../config/setters";
 import * as CustomText from "./custom-text";
 import * as TestInput from "./test-input";
-import * as ConfigEvent from "../observables/config-event";
-import { setCustomTextName } from "../states/custom-text-name";
+import { configEvent } from "../events/config";
+import { setCustomTextName } from "../legacy-states/custom-text-name";
 import { Mode } from "@monkeytype/schemas/shared";
 import { CustomTextSettings } from "@monkeytype/schemas/results";
 
@@ -53,7 +55,7 @@ export function init(
   let sortableMissedBiwords: [string, string, number][] = [];
   if (missed === "biwords") {
     for (let i = 0; i < TestWords.words.length; i++) {
-      const missedWord = TestWords.words.get(i);
+      const missedWord = TestWords.words.getText(i);
       const missedWordCount = TestInput.missedWords[missedWord];
       if (missedWordCount !== undefined) {
         if (i === 0) {
@@ -61,7 +63,7 @@ export function init(
         } else {
           sortableMissedBiwords.push([
             missedWord,
-            TestWords.words.get(i - 1),
+            TestWords.words.getText(i - 1),
             missedWordCount,
           ]);
         }
@@ -78,14 +80,14 @@ export function init(
       (missed === "biwords" && sortableMissedBiwords.length === 0)) &&
     !slow
   ) {
-    Notifications.add("You haven't missed any words", 0);
+    showNoticeNotification("You haven't missed any words");
     return false;
   }
 
   let sortableSlowWords: [string, number][] = [];
   if (slow) {
     const typedWords = TestWords.words
-      .get()
+      .getText()
       .slice(0, TestInput.input.getHistory().length - 1);
 
     sortableSlowWords = typedWords.map((e, i) => [
@@ -100,7 +102,7 @@ export function init(
       Math.min(limit, Math.round(typedWords.length * 0.2)),
     );
     if (sortableSlowWords.length === 0) {
-      Notifications.add("Test too short to classify slow words.", 0);
+      showNoticeNotification("Test too short to classify slow words.");
     }
   }
 
@@ -113,7 +115,7 @@ export function init(
     sortableMissedBiwords.length === 0 &&
     sortableSlowWords.length === 0
   ) {
-    Notifications.add("Could not start a new custom test", 0);
+    showNoticeNotification("Could not start a new custom test");
     return false;
   }
 
@@ -180,6 +182,6 @@ export function resetBefore(): void {
   before.customText = null;
 }
 
-ConfigEvent.subscribe(({ key }) => {
+configEvent.subscribe(({ key }) => {
   if (key === "mode") resetBefore();
 });

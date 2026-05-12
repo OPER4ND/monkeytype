@@ -1,19 +1,29 @@
 import SettingsGroup from "../elements/settings/settings-group";
-import Config, { setConfig, configLoadPromise } from "../config";
+
+import { Config } from "../config/store";
+import { configLoadPromise } from "../config/lifecycle";
+import { setConfig } from "../config/setters";
 import * as Sound from "../controllers/sound-controller";
 import * as Misc from "../utils/misc";
 import * as Strings from "../utils/strings";
 import * as DB from "../db";
 import * as Funbox from "../test/funbox/funbox";
-import * as TagController from "../controllers/tag-controller";
+import {
+  __nonReactive as __nonReactiveTags,
+  toggleTagActive,
+  useTagsLiveQuery,
+} from "../collections/tags";
 import * as PresetController from "../controllers/preset-controller";
 import * as ThemePicker from "../elements/settings/theme-picker";
-import * as Notifications from "../elements/notifications";
+import {
+  showNoticeNotification,
+  showErrorNotification,
+  showSuccessNotification,
+} from "../states/notifications";
 import * as ImportExportSettingsModal from "../modals/import-export-settings";
-import * as ConfigEvent from "../observables/config-event";
-import { getActivePage } from "../signals/core";
+import { configEvent, type ConfigEventKey } from "../events/config";
+import { getActivePage, isAuthenticated } from "../states/core";
 import { PageWithUrlParams } from "./page";
-import { isAuthenticated } from "../firebase";
 import { get as getTypingSpeedUnit } from "../utils/typing-speed-units";
 import SlimSelect from "slim-select";
 import * as Skeleton from "../utils/skeleton";
@@ -27,7 +37,10 @@ import {
 } from "@monkeytype/schemas/configs";
 import { getAllFunboxes, checkCompatibility } from "@monkeytype/funbox";
 import { getActiveFunboxNames } from "../test/funbox/list";
-import { SnapshotPreset } from "../constants/default-snapshot";
+import {
+  __nonReactive as __nonReactivePresets,
+  usePresetsLiveQuery,
+} from "../collections/presets";
 import { LayoutsList } from "../constants/layouts";
 import { DataArrayPartial, Optgroup, OptionOptional } from "slim-select/store";
 import { ThemesList, ThemeWithName } from "../constants/themes";
@@ -41,10 +54,12 @@ import { handleConfigInput } from "../elements/input-validation";
 import { Fonts } from "../constants/fonts";
 import * as CustomBackgroundPicker from "../elements/settings/custom-background-picker";
 import * as CustomFontPicker from "../elements/settings/custom-font-picker";
-import * as AuthEvent from "../observables/auth-event";
+import { authEvent } from "../events/auth";
 import * as FpsLimitSection from "../elements/settings/fps-limit-section";
 import { qs, qsa, qsr, onDOMReady } from "../utils/dom";
 import { showPopup } from "../modals/simple-modals-base";
+import { createEffectOn } from "../hooks/effects";
+import { createMemo } from "solid-js";
 
 let settingsInitialized = false;
 
@@ -80,6 +95,7 @@ async function initGroups(): Promise<void> {
   );
   groups["difficulty"] = new SettingsGroup("difficulty", "button");
   groups["quickRestart"] = new SettingsGroup("quickRestart", "button");
+  groups["resultSaving"] = new SettingsGroup("resultSaving", "button");
   groups["showAverage"] = new SettingsGroup("showAverage", "button");
   groups["keymapMode"] = new SettingsGroup("keymapMode", "button", {
     updateCallback: () => {
@@ -509,23 +525,25 @@ function setActiveFunboxButton(): void {
   }
 }
 
+const tagsQuery = useTagsLiveQuery();
+const activeTags = createMemo(() => tagsQuery().filter((tag) => tag.active));
+createEffectOn(activeTags, refreshTagsSettingsSection);
+
 function refreshTagsSettingsSection(): void {
   if (isAuthenticated() && DB.getSnapshot()) {
     const tagsEl = qs(".pageSettings .section.tags .tagsList")?.empty();
-    DB.getSnapshot()?.tags?.forEach((tag) => {
+    __nonReactiveTags.getTags().forEach((tag) => {
       // let tagPbString = "No PB found";
       // if (tag.pb !== undefined && tag.pb > 0) {
       //   tagPbString = `PB: ${tag.pb}`;
       // }
       tagsEl?.appendHtml(`
 
-      <div class="buttons tag" data-id="${tag._id}" data-name="${
-        tag.name
-      }" data-display="${tag.display}">
+      <div class="buttons tag" data-id="${tag._id}" data-name="${tag.name}">
         <button class="tagButton ${tag.active ? "active" : ""}" active="${
           tag.active
         }">
-          ${tag.display}
+          ${tag.name}
         </button>
         <button class="clearPbButton" aria-label="clear tags personal bests" data-balloon-pos="left" >
           <i class="fas fa-crown fa-fw"></i>
@@ -546,15 +564,18 @@ function refreshTagsSettingsSection(): void {
   }
 }
 
+const presetsQuery = usePresetsLiveQuery();
+createEffectOn(presetsQuery, refreshPresetsSettingsSection);
+
 function refreshPresetsSettingsSection(): void {
   if (isAuthenticated() && DB.getSnapshot()) {
     const presetsEl = qs(
       ".pageSettings .section.presets .presetsList",
     )?.empty();
-    DB.getSnapshot()?.presets?.forEach((preset: SnapshotPreset) => {
+    __nonReactivePresets.getPresets().forEach((preset) => {
       presetsEl?.appendHtml(`
-      <div class="buttons preset" data-id="${preset._id}" data-name="${preset.name}" data-display="${preset.display}">
-        <button class="presetButton">${preset.display}</button>
+      <div class="buttons preset" data-id="${preset._id}" data-name="${preset.name}">
+        <button class="presetButton">${preset.name}</button>
         <button class="editButton">
           <i class="fas fa-pen fa-fw"></i>
         </button>
@@ -562,7 +583,7 @@ function refreshPresetsSettingsSection(): void {
           <i class="fas fa-trash fa-fw"></i>
         </button>
       </div>
-      
+
       `);
     });
     qs(".pageSettings .section.presets")?.show();
@@ -590,7 +611,7 @@ export async function updateFilterSectionVisibility(): Promise<void> {
 
 export async function update(
   options: {
-    eventKey?: ConfigEvent.ConfigEventKey;
+    eventKey?: ConfigEventKey;
   } = {},
 ): Promise<void> {
   if (getActivePage() !== "settings") {
@@ -715,17 +736,6 @@ export async function update(
 
   CustomBackgroundFilter.updateUI();
 
-  const userAgent = window.navigator.userAgent.toLowerCase();
-  const modifierKey =
-    userAgent.includes("mac") && !userAgent.includes("firefox")
-      ? "cmd"
-      : "ctrl";
-
-  const commandKey = Config.quickRestart === "esc" ? "tab" : "esc";
-  qs(".pageSettings .tip")?.setHtml(`
-    tip: You can also change all these settings quickly using the
-    command line (<kbd>${commandKey}</kbd> or <kbd>${modifierKey}</kbd> + <kbd>shift</kbd> + <kbd>p</kbd>)`);
-
   if (
     customLayoutFluidSelect !== undefined &&
     //checking equal with order, because customLayoutFluid is ordered
@@ -790,7 +800,7 @@ qs(".pageSettings .section.tags")?.onChild(
   (e) => {
     const target = e.childTarget as HTMLElement;
     const tagid = target.parentElement?.getAttribute("data-id") as string;
-    TagController.toggle(tagid);
+    toggleTagActive(tagid);
     target.classList.toggle("active");
   },
 );
@@ -814,7 +824,7 @@ qs("#exportSettingsButton")?.on("click", () => {
   const configJSON = JSON.stringify(Config);
   navigator.clipboard.writeText(configJSON).then(
     function () {
-      Notifications.add("JSON Copied to clipboard", 0);
+      showNoticeNotification("JSON Copied to clipboard");
     },
     function () {
       ImportExportSettingsModal.show("export");
@@ -839,9 +849,7 @@ qs(
     ),
   );
   if (didConfigSave) {
-    Notifications.add("Saved", 1, {
-      duration: 1,
-    });
+    showSuccessNotification("Saved", { durationMs: 1000 });
   }
 });
 
@@ -857,9 +865,7 @@ qs(
     ),
   );
   if (didConfigSave) {
-    Notifications.add("Saved", 1, {
-      duration: 1,
-    });
+    showSuccessNotification("Saved", { durationMs: 1000 });
   }
 });
 
@@ -876,16 +882,17 @@ qs(
       ),
     );
     if (didConfigSave) {
-      Notifications.add("Saved", 1, {
-        duration: 1,
-      });
+      showSuccessNotification("Saved", { durationMs: 1000 });
     }
   }
 });
 
 qsa(".pageSettings .quickNav .links a")?.on("click", (e) => {
-  const target = e.currentTarget as HTMLElement;
-  const settingsGroup = target.innerText;
+  const target = e.currentTarget as HTMLAnchorElement;
+  const href = target.getAttribute("href") ?? "";
+  if (!href.startsWith("#group_")) return;
+  const settingsGroup = href.slice("#group_".length);
+  if (settingsGroup === "") return;
   const isClosed = qs(
     `.pageSettings .settingsGroup.${settingsGroup}`,
   )?.hasClass("slideup");
@@ -973,11 +980,10 @@ qsa(".pageSettings .section .groupTitle button")?.on("click", (e) => {
   navigator.clipboard
     .writeText(window.location.toString())
     .then(() => {
-      Notifications.add("Link copied to clipboard", 1);
+      showSuccessNotification("Link copied to clipboard");
     })
     .catch((e: unknown) => {
-      const msg = Misc.createErrorMessage(e, "Failed to copy to clipboard");
-      Notifications.add(msg, -1);
+      showErrorNotification("Failed to copy to clipboard", { error: e });
     });
 });
 
@@ -1023,7 +1029,7 @@ qs(".pageSettings #resetSettingsButton")?.on("click", () => {
   showPopup("resetSettings");
 });
 
-ConfigEvent.subscribe(({ key, newValue }) => {
+configEvent.subscribe(({ key, newValue }) => {
   if (key === "fullConfigChange") setEventDisabled(true);
   if (key === "fullConfigChangeFinished") setEventDisabled(false);
   if (key === "themeLight") {
@@ -1044,7 +1050,7 @@ ConfigEvent.subscribe(({ key, newValue }) => {
   }
 });
 
-AuthEvent.subscribe((event) => {
+authEvent.subscribe((event) => {
   if (event.type === "authStateChanged") {
     if (event.data.isUserSignedIn) {
       showAccountSection();
@@ -1064,7 +1070,7 @@ export const page = new PageWithUrlParams({
   },
   beforeShow: async (options): Promise<void> => {
     Skeleton.append("pageSettings", "main");
-    await configLoadPromise;
+    await configLoadPromise; //todo: is this actually needed here if we await it in ready?
     await fillSettingsPage();
     await update();
     // theme UI updates manually to avoid duplication

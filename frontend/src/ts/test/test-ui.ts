@@ -1,5 +1,10 @@
-import * as Notifications from "../elements/notifications";
-import Config, { setConfig } from "../config";
+import {
+  showNoticeNotification,
+  showErrorNotification,
+} from "../states/notifications";
+
+import { Config } from "../config/store";
+import { setConfig } from "../config/setters";
 import * as TestWords from "./test-words";
 import * as TestInput from "./test-input";
 import * as CustomText from "./custom-text";
@@ -9,12 +14,12 @@ import * as Misc from "../utils/misc";
 import * as Strings from "../utils/strings";
 import { blendTwoHexColors } from "../utils/colors";
 import { get as getTypingSpeedUnit } from "../utils/typing-speed-units";
-import * as CompositionState from "../states/composition";
-import * as ConfigEvent from "../observables/config-event";
+import * as CompositionState from "../legacy-states/composition";
+import { configEvent } from "../events/config";
 import * as Hangul from "hangul-js";
 import * as ResultWordHighlight from "../elements/result-word-highlight";
-import { getActivePage } from "../signals/core";
-import Format from "../utils/format";
+import { getActivePage } from "../states/core";
+import Format from "../singletons/format";
 import { TimerColor, TimerOpacity } from "@monkeytype/schemas/configs";
 import { convertRemToPixels } from "../utils/numbers";
 import {
@@ -30,7 +35,7 @@ import {
 import * as SoundController from "../controllers/sound-controller";
 import * as Numbers from "@monkeytype/util/numbers";
 import * as TestStats from "./test-stats";
-import * as KeymapEvent from "../observables/keymap-event";
+import { highlight } from "../events/keymap";
 import * as LiveAcc from "./live-acc";
 import * as Focus from "../test/focus";
 import * as TimerProgress from "../test/timer-progress";
@@ -44,14 +49,13 @@ import {
   isInputElementFocused,
 } from "../input/input-element";
 import * as MonkeyPower from "../elements/monkey-power";
-import * as SlowTimer from "../states/slow-timer";
-import * as TestConfig from "./test-config";
+import * as SlowTimer from "../legacy-states/slow-timer";
 import * as CompositionDisplay from "../elements/composition-display";
 import * as AdController from "../controllers/ad-controller";
+import * as Ligatures from "./break-ligatures";
 import * as LayoutfluidFunboxTimer from "../test/funbox/layoutfluid-funbox-timer";
 import * as Keymap from "../elements/keymap";
 import * as ThemeController from "../controllers/theme-controller";
-import * as XPBar from "../elements/xp-bar";
 import * as ModesNotice from "../elements/modes-notice";
 import * as Last10Average from "../elements/last-10-average";
 import * as MemoryFunboxTimer from "./funbox/memory-funbox-timer";
@@ -62,7 +66,9 @@ import {
   qsa,
   qsr,
 } from "../utils/dom";
-import { getTheme } from "../signals/theme";
+import { getTheme } from "../states/theme";
+import { skipBreakdownEvent } from "../states/header";
+import { wordsHaveNewline } from "../states/test";
 
 export const updateHintsPositionDebounced = Misc.debounceUntilResolved(
   updateHintsPosition,
@@ -141,6 +147,7 @@ export function updateActiveElement(
       if (previousActiveWord !== null) {
         if (direction === "forward") {
           previousActiveWord.addClass("typed");
+          Ligatures.set(previousActiveWord, true);
         } else if (direction === "back") {
           //
         }
@@ -157,6 +164,7 @@ export function updateActiveElement(
     newActiveWord.addClass("active");
     newActiveWord.removeClass("error");
     newActiveWord.removeClass("typed");
+    Ligatures.set(newActiveWord, false);
 
     activeWordTop = newActiveWord.getOffsetTop();
     activeWordHeight = newActiveWord.getOffsetHeight();
@@ -219,8 +227,8 @@ async function joinOverlappingHints(
   activeWordLetters: ElementsWithUtils,
   hintElements: HTMLCollection,
 ): Promise<void> {
-  const [isWordRightToLeft, _isFullMatch] = Strings.isWordRightToLeft(
-    TestWords.words.getCurrent(),
+  const [isWordRightToLeft] = Strings.isWordRightToLeft(
+    TestWords.words.getCurrentText(),
     TestState.isLanguageRightToLeft,
     TestState.isDirectionReversed,
   );
@@ -524,7 +532,7 @@ function showWords(): void {
   } else {
     let wordsHTML = "";
     for (let i = 0; i < TestWords.words.length; i++) {
-      wordsHTML += buildWordHTML(TestWords.words.get(i), i);
+      wordsHTML += buildWordHTML(TestWords.words.getText(i), i);
     }
     wordsEl.setHtml(wordsHTML);
   }
@@ -633,7 +641,7 @@ export function updateWordsWrapperHeight(force = false): void {
   const activeWordEl = getActiveWordElement();
   if (!activeWordEl) return;
 
-  wordsWrapperEl.removeClass("hidden");
+  wordsWrapperEl.show();
 
   const wordComputedStyle = window.getComputedStyle(activeWordEl.native);
   const wordMargin =
@@ -680,7 +688,7 @@ export function updateWordsWrapperHeight(force = false): void {
       wordsWrapperEl.setStyle({ height: wrapperHeight + "px" });
     } else {
       //show 3 lines if tape mode is on and has newlines, otherwise use words height (because of indicate typos: below)
-      if (TestWords.hasNewline) {
+      if (wordsHaveNewline()) {
         wordsWrapperEl.setStyle({ height: wordHeight * 3 + "px" });
       } else {
         const wordsHeight = wordsEl.getOffsetHeight() ?? wordHeight;
@@ -761,7 +769,7 @@ export async function updateWordLetters({
     `test-ui.updateWordLetters.${wordIndex}`,
     async () => {
       pendingWordData.delete(wordIndex);
-      const currentWord = TestWords.words.get(wordIndex);
+      const currentWord = TestWords.words.getText(wordIndex);
       if (!currentWord && Config.mode !== "zen") return;
       let ret = "";
       const wordAtIndex = getWordElement(wordIndex);
@@ -1432,14 +1440,11 @@ async function loadWordsHistory(): Promise<boolean> {
   for (let i = 0; i < inputHistoryLength + 2; i++) {
     const input = TestInput.input.getHistory(i);
     const corrected = TestInput.corrected.getHistory(i);
-    const word = TestWords.words.get(i);
+    const word = TestWords.words.getText(i) ?? "";
+    const koreanRegex =
+      /[\uac00-\ud7af]|[\u1100-\u11ff]|[\u3130-\u318f]|[\ua960-\ua97f]|[\ud7b0-\ud7ff]/;
     const containsKorean =
-      input?.match(
-        /[\uac00-\ud7af]|[\u1100-\u11ff]|[\u3130-\u318f]|[\ua960-\ua97f]|[\ud7b0-\ud7ff]/g,
-      ) !== null ||
-      word?.match(
-        /[\uac00-\ud7af]|[\u1100-\u11ff]|[\u3130-\u318f]|[\ua960-\ua97f]|[\ud7b0-\ud7ff]/g,
-      ) !== null;
+      koreanRegex.test(input ?? "") || koreanRegex.test(word);
 
     const wordEl = document.createElement("div");
     wordEl.className = "word";
@@ -1459,7 +1464,7 @@ async function loadWordsHistory(): Promise<boolean> {
         Config.mode === "time" ||
         (Config.mode === "custom" && CustomText.getLimitMode() === "time") ||
         (Config.mode === "custom" && CustomText.getLimitValue() === 0);
-      const isPartiallyCorrect = word.substring(0, input.length) === input;
+      const isPartiallyCorrect = word.startsWith(input);
 
       const shouldShowError =
         Config.mode !== "zen" &&
@@ -1484,7 +1489,7 @@ async function loadWordsHistory(): Promise<boolean> {
       }
 
       const inputCharacters = Strings.splitIntoCharacters(input);
-      const wordCharacters = Strings.splitIntoCharacters(word ?? "");
+      const wordCharacters = Strings.splitIntoCharacters(word);
       const correctedCharacters = Strings.splitIntoCharacters(corrected ?? "");
 
       let loop;
@@ -1576,7 +1581,7 @@ export async function toggleResultWords(noAnimation = false): Promise<void> {
 
 export async function applyBurstHeatmap(): Promise<void> {
   if (Config.burstHeatmap) {
-    qsa("#resultWordsHistory .heatmapLegend")?.removeClass("hidden");
+    qsa("#resultWordsHistory .heatmapLegend")?.show();
 
     let burstlist = [...TestInput.burstHistory];
 
@@ -1680,7 +1685,7 @@ export async function applyBurstHeatmap(): Promise<void> {
       });
     }
   } else {
-    qs("#resultWordsHistory .heatmapLegend")?.addClass("hidden");
+    qs("#resultWordsHistory .heatmapLegend")?.hide();
     qsa("#resultWordsHistory .words .word")?.removeClass("heatmapInherit");
     qsa("#resultWordsHistory .words .word")?.setStyle({ color: "" });
 
@@ -1799,9 +1804,9 @@ function updateLiveStatsColor(value: TimerColor): void {
 
 function showHideTestRestartButton(showHide: boolean): void {
   if (showHide) {
-    qs(".pageTest #restartTestButton")?.removeClass("hidden");
+    qs(".pageTest #restartTestButton")?.show();
   } else {
-    qs(".pageTest #restartTestButton")?.addClass("hidden");
+    qs(".pageTest #restartTestButton")?.hide();
   }
 }
 
@@ -1813,15 +1818,17 @@ export function getActiveWordTopAndHeightWithDifferentData(data: string): {
 
   if (!activeWord) throw new Error("No active word element found");
 
+  const lettersEls = activeWord.qsa("letter");
+  const domLettersCount = lettersEls.length;
   const nodes = [];
-  for (let i = activeWord.getChildren().length; i < data.length; i++) {
+  for (let i = domLettersCount; i < data.length; i++) {
     const tempLetter = document.createElement("letter");
     const displayData = data[i] === " " ? "_" : data[i];
     tempLetter.textContent = displayData as string;
     nodes.push(tempLetter);
   }
 
-  activeWord.append(nodes);
+  lettersEls[domLettersCount - 1]?.native.after(...nodes);
 
   const top = activeWord.getOffsetTop();
   const height = activeWord.getOffsetHeight();
@@ -1859,8 +1866,8 @@ function afterAnyTestInput(
   }
 
   if (Config.keymapMode === "next") {
-    void KeymapEvent.highlight(
-      TestWords.words.getCurrent().charAt(TestInput.input.current.length),
+    highlight(
+      TestWords.words.getCurrentText().charAt(TestInput.input.current.length),
     );
   }
 
@@ -1993,10 +2000,9 @@ export function onTestStart(): void {
 }
 
 export function onTestRestart(source: "testPage" | "resultPage"): void {
-  qs("#result")?.addClass("hidden");
-  qs("#typingTest")?.setStyle({ opacity: "0" }).removeClass("hidden");
+  qs("#result")?.hide();
+  qs("#typingTest")?.setStyle({ opacity: "0" }).show();
   getInputElement().style.left = "0";
-  TestConfig.show();
   Focus.set(false);
   LiveSpeed.instantHide();
   LiveSpeed.reset();
@@ -2027,7 +2033,7 @@ export function onTestRestart(source: "testPage" | "resultPage"): void {
     if (Config.randomTheme !== "off") {
       void ThemeController.randomizeTheme();
     }
-    void XPBar.skipBreakdown();
+    skipBreakdownEvent.dispatch();
   }
 
   currentTestLine = 0;
@@ -2065,7 +2071,7 @@ qs(".pageTest #copyWordsListButton")?.on("click", async () => {
     words = TestInput.input.getHistory().join(" ");
   } else {
     words = TestWords.words
-      .get()
+      .getText()
       .slice(0, TestInput.input.getHistory().length)
       .join(" ");
   }
@@ -2085,12 +2091,11 @@ qs(".pageTest #copyMissedWordsListButton")?.on("click", async () => {
 async function copyToClipboard(content: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(content);
-    Notifications.add("Copied to clipboard", 0, {
-      duration: 2,
+    showNoticeNotification("Copied to clipboard", {
+      durationMs: 2000,
     });
   } catch (e) {
-    const msg = Misc.createErrorMessage(e, "Could not copy to clipboard");
-    Notifications.add(msg, -1);
+    showErrorNotification("Could not copy to clipboard", { error: e });
   }
 }
 
@@ -2135,7 +2140,7 @@ qs("#wordsWrapper")?.on("click", () => {
   focusWords();
 });
 
-ConfigEvent.subscribe(({ key, newValue }) => {
+configEvent.subscribe(({ key, newValue }) => {
   if (key === "quickRestart") {
     showHideTestRestartButton(newValue === "off");
   }
@@ -2187,11 +2192,15 @@ ConfigEvent.subscribe(({ key, newValue }) => {
       "colorfulMode",
       "showAllLines",
       "fontSize",
+      "fontFamily",
       "maxLineWidth",
       "tapeMargin",
     ].includes(key)
   ) {
-    updateWordWrapperClasses();
+    if (key !== "fontFamily") updateWordWrapperClasses();
+    if (["typedEffect", "fontFamily", "fontSize"].includes(key)) {
+      Ligatures.update(key, wordsEl);
+    }
   }
   if (["tapeMode", "tapeMargin"].includes(key)) {
     updateLiveStatsMargin();

@@ -1,8 +1,8 @@
 /**
  * Example usage in root or frontend:
  * pnpm check-assets (npm run check-assets)
- * pnpm vaildate-json quotes others(npm run vaildate-json quotes others)
- * pnpm check-assets challenges fonts -p (npm run check-assets challenges fonts -- -p)
+ * pnpm check-assets -- -- quotes others (npm run check-assets -- -- quotes others)
+ * pnpm check-assets -- -- challenges sound -p (npm run check-assets -- -- challenges sound -p)
  */
 
 import * as fs from "fs";
@@ -11,7 +11,6 @@ import {
   Language,
   LanguageObject,
   LanguageObjectSchema,
-  LanguageSchema,
 } from "@monkeytype/schemas/languages";
 import { Layout, ThemeName } from "@monkeytype/schemas/configs";
 import { LayoutsList } from "../src/ts/constants/layouts";
@@ -22,6 +21,7 @@ import { z } from "zod";
 import { ChallengeSchema, Challenge } from "@monkeytype/schemas/challenges";
 import { LayoutObject, LayoutObjectSchema } from "@monkeytype/schemas/layouts";
 import { QuoteDataSchema, QuoteData } from "@monkeytype/schemas/quotes";
+import { clickSoundConfig } from "../src/ts/constants/sounds";
 
 class Problems<K extends string, T extends string> {
   private type: string;
@@ -152,6 +152,10 @@ async function validateLayouts(): Promise<void> {
 async function validateQuotes(): Promise<void> {
   const problems = new Problems<string, never>("Quotes", {});
 
+  const shortQuotes = JSON.parse(
+    fs.readFileSync("./scripts/short-quotes.json", "utf8"),
+  ) as Record<QuoteData["language"], number[]>;
+
   const quotesFiles = fs.readdirSync("./static/quotes/");
   for (let quotefilename of quotesFiles) {
     quotefilename = quotefilename.split(".")[0] as string;
@@ -181,12 +185,7 @@ async function validateQuotes(): Promise<void> {
     }
 
     //check schema
-    const schema = QuoteDataSchema.extend({
-      language: LanguageSchema
-        //icelandic only exists as icelandic_1k, language in quote file is stipped of its size
-        .or(z.literal("icelandic")),
-    });
-    problems.addValidation(quotefilename, schema.safeParse(quoteData));
+    problems.addValidation(quotefilename, QuoteDataSchema.safeParse(quoteData));
 
     //check for duplicate ids
     const duplicates = findDuplicates(quoteData.quotes.map((it) => it.id));
@@ -198,14 +197,23 @@ async function validateQuotes(): Promise<void> {
     }
 
     //check quote length
-    quoteData.quotes
-      .filter((quote) => quote.text.length !== quote.length)
-      .forEach((quote) =>
+    quoteData.quotes.forEach((quote) => {
+      if (quote.text.length !== quote.length) {
         problems.add(
           quotefilename,
           `ID ${quote.id}: expected length ${quote.text.length}`,
-        ),
-      );
+        );
+      }
+
+      if (!shortQuotes[quoteData.language]?.includes(quote.id)) {
+        if (quote.text.length < 60) {
+          problems.add(
+            quotefilename,
+            `ID ${quote.id}: length too short (under 60 characters)`,
+          );
+        }
+      }
+    });
 
     //check groups
     let last = -1;
@@ -336,7 +344,7 @@ async function validateFonts(): Promise<void> {
   //no missing files
   const ignoredFonts = new Set([
     "GallaudetRegular.woff2", //used for asl
-    "Vazirmatn-Regular.woff2", //default font
+    "Vazirharf-NL-Regular.woff2", //default font
   ]);
 
   const fontFiles = fs
@@ -414,6 +422,54 @@ async function validateThemes(): Promise<void> {
   }
 }
 
+async function validateSounds(): Promise<void> {
+  const problems = new Problems<string, "_additional">("Sounds", {
+    _additional:
+      "Sound files present but missing in frontend/src/ts/constants/sounds",
+  });
+
+  const soundFiles = new Set(
+    fs
+      .readdirSync("./static/sounds")
+      .filter((it) => it.startsWith("click"))
+      .flatMap((folder) =>
+        fs
+          .readdirSync(`./static/sounds/${folder}`)
+          .map((it) => `${folder}/${it}`),
+      ),
+  );
+
+  //missing sound files
+
+  Object.entries(clickSoundConfig).forEach(([key, value]) => {
+    value
+      .map((file) => file.substring("../sounds/".length))
+      .filter((it) => !soundFiles.has(it))
+      .forEach((file) =>
+        problems.add(
+          "click" + key,
+          `missing file frontend/static/sounds/${file}`,
+        ),
+      );
+  });
+
+  //additional files
+  const expectedSoundFiles = new Set(
+    Object.values(clickSoundConfig).flatMap((it) =>
+      it.map((file) => file.substring("../sounds/".length)),
+    ),
+  );
+  [...soundFiles]
+    .filter((name) => !expectedSoundFiles.has(name))
+    .forEach((file) => problems.add("_additional", file));
+
+  console.log(problems.toString());
+
+  if (problems.hasError()) {
+    throw new Error("sounds with errors");
+  }
+}
+
 type Validator = () => Promise<void>;
 
 async function main(): Promise<void> {
@@ -429,11 +485,13 @@ async function main(): Promise<void> {
     challenges: [validateChallenges],
     fonts: [validateFonts],
     themes: [validateThemes],
+    sounds: [validateSounds],
     others: [
       validateChallenges,
       validateLayouts,
       validateFonts,
       validateThemes,
+      validateSounds,
     ],
   };
 

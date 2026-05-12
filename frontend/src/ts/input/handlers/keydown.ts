@@ -1,19 +1,20 @@
-import Config from "../../config";
+import { Config } from "../../config/store";
 import * as TestInput from "../../test/test-input";
 import * as TestLogic from "../../test/test-logic";
 import { getCharFromEvent } from "../../test/layout-emulator";
 import * as Monkey from "../../test/monkey";
 import { emulateInsertText } from "./insert-text";
 import * as TestState from "../../test/test-state";
-import * as TestWords from "../../test/test-words";
 import * as JSONData from "../../utils/json-data";
-import * as Notifications from "../../elements/notifications";
+import {
+  showNoticeNotification,
+  showErrorNotification,
+} from "../../states/notifications";
 import * as KeyConverter from "../../utils/key-converter";
 import * as ShiftTracker from "../../test/shift-tracker";
-import * as ManualRestart from "../../test/manual-restart-tracker";
 import { canQuickRestart } from "../../utils/quick-restart";
 import * as CustomText from "../../test/custom-text";
-import * as CustomTextState from "../../states/custom-text-name";
+import * as CustomTextState from "../../legacy-states/custom-text-name";
 import {
   getLastBailoutAttempt,
   setCorrectShiftUsed,
@@ -23,19 +24,11 @@ import {
   getActiveFunboxesWithFunction,
   getActiveFunboxNames,
 } from "../../test/funbox/list";
+import { Keycode } from "../../constants/keys";
+import { wordsHaveTab } from "../../states/test";
 
 export async function handleTab(e: KeyboardEvent, now: number): Promise<void> {
-  if (Config.quickRestart === "tab") {
-    e.preventDefault();
-    if ((TestWords.hasTab && e.shiftKey) || !TestWords.hasTab) {
-      if (e.shiftKey) {
-        ManualRestart.set();
-      }
-      TestLogic.restart();
-      return;
-    }
-  }
-  if (TestWords.hasTab) {
+  if (wordsHaveTab() && !e.shiftKey) {
     await emulateInsertText({ data: "\t", now });
     e.preventDefault();
     return;
@@ -63,12 +56,11 @@ export async function handleEnter(
       if (getLastBailoutAttempt() === -1 || delay > 200) {
         setLastBailoutAttempt(Date.now());
         if (delay >= 5000) {
-          Notifications.add(
+          showNoticeNotification(
             "Please double tap shift+enter to confirm bail out",
-            0,
             {
               important: true,
-              duration: 5,
+              durationMs: 5000,
             },
           );
         }
@@ -79,17 +71,6 @@ export async function handleEnter(
         void TestLogic.finish();
         return;
       }
-    }
-  }
-
-  if (Config.quickRestart === "enter") {
-    e.preventDefault();
-    if ((TestWords.hasNewline && e.shiftKey) || !TestWords.hasNewline) {
-      if (e.shiftKey) {
-        ManualRestart.set();
-      }
-      TestLogic.restart();
-      return;
     }
   }
 }
@@ -103,7 +84,7 @@ export async function handleOppositeShift(event: KeyboardEvent): Promise<void> {
       () => undefined,
     );
     if (keymapLayout === undefined) {
-      Notifications.add("Failed to load keymap layout", -1);
+      showErrorNotification("Failed to load keymap layout");
 
       return;
     }
@@ -120,7 +101,7 @@ export async function handleOppositeShift(event: KeyboardEvent): Promise<void> {
     );
   } else {
     setCorrectShiftUsed(
-      ShiftTracker.isUsingOppositeShift(event.code as KeyConverter.Keycode),
+      ShiftTracker.isUsingOppositeShift(event.code as Keycode),
     );
   }
 }
@@ -194,17 +175,6 @@ export async function onKeydown(event: KeyboardEvent): Promise<void> {
 
   if (event.key === "Enter") {
     await handleEnter(event, now);
-    return;
-  }
-
-  if (event.key === "Escape" && Config.quickRestart === "esc") {
-    event.preventDefault();
-
-    if (event.shiftKey) {
-      ManualRestart.set();
-    }
-
-    TestLogic.restart();
     return;
   }
 }

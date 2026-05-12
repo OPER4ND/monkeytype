@@ -2,7 +2,7 @@ import { useInfiniteQuery } from "@tanstack/solid-query";
 import { For, JSXElement, Show } from "solid-js";
 
 import { getVersionHistoryQueryOptions } from "../../queries/public";
-import { isModalOpen } from "../../stores/modals";
+import { isModalOpen } from "../../states/modals";
 import { AnimatedModal } from "../common/AnimatedModal";
 import AsyncContent from "../common/AsyncContent";
 import { LoadingCircle } from "../common/LoadingCircle";
@@ -34,20 +34,20 @@ export function VersionHistoryModal(): JSXElement {
       onScroll={fetchMoreVersions}
     >
       <AsyncContent
-        query={releases}
+        queries={{ releases }}
         errorMessage="Failed to load version history"
       >
-        {(data) => (
+        {({ releasesData }) => (
           <>
             <div class="releases">
-              <For each={data.pages.flatMap((it) => it.releases)}>
+              <For each={releasesData().pages.flatMap((it) => it.releases)}>
                 {(release) => <ReleaseItem {...release} />}
               </For>
             </div>
 
             <div class="mb-8 text-center text-2xl">
               <Show when={releases.isFetching}>
-                <LoadingCircle class="text-sub" />
+                <LoadingCircle color="sub" />
               </Show>
             </div>
           </>

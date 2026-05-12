@@ -3,9 +3,9 @@ import * as LiveSpeed from "./live-speed";
 import * as LiveBurst from "./live-burst";
 import * as LiveAcc from "./live-acc";
 import * as TimerProgress from "./timer-progress";
-import * as PageTransition from "../states/page-transition";
+import * as PageTransition from "../legacy-states/page-transition";
 import { requestDebouncedAnimationFrame } from "../utils/debounced-animation-frame";
-import { getFocus, setFocus } from "../signals/core";
+import { getFocus, setFocus } from "../states/test";
 import { qsa, ElementsWithUtils } from "../utils/dom";
 
 const unfocusPx = 3;
@@ -19,14 +19,11 @@ let cache: {
 function initializeCache(): void {
   if (cacheReady) return;
 
-  const cursorSelector = "body, button, a";
   const elementsSelector = [
     "app",
-    "header",
     "footer",
     "main",
     "#bannerCenter",
-    "#notificationCenter",
     "#capsWarning",
     "#ad-vertical-right-wrapper",
     "#ad-vertical-left-wrapper",
@@ -34,7 +31,6 @@ function initializeCache(): void {
     "#ad-footer-small-wrapper",
   ].join(",");
 
-  cache.cursor = qsa(cursorSelector);
   cache.focus = qsa(elementsSelector);
 
   cacheReady = true;
@@ -45,6 +41,7 @@ function initializeCache(): void {
 export function set(value: boolean, withCursor = false): void {
   requestDebouncedAnimationFrame("focus.set", () => {
     initializeCache();
+    cache.cursor = qsa("body, button, a");
 
     if (value && !getFocus()) {
       setFocus(true);
@@ -53,7 +50,7 @@ export function set(value: boolean, withCursor = false): void {
       if (cache.focus) {
         cache.focus.addClass("focus");
       }
-      if (!withCursor && cache.cursor) {
+      if (!withCursor && cache.cursor !== undefined) {
         cache.cursor.setStyle({ cursor: "none" });
       }
 
@@ -68,7 +65,7 @@ export function set(value: boolean, withCursor = false): void {
       if (cache.focus) {
         cache.focus.removeClass("focus");
       }
-      if (cache.cursor) {
+      if (cache.cursor !== undefined) {
         cache.cursor.setStyle({ cursor: "" });
       }
 

@@ -1,6 +1,6 @@
 import "@tanstack/solid-table";
 import type { JSX } from "solid-js";
-import { BreakpointKey } from "../signals/breakpoints";
+import { BreakpointKey } from "../states/breakpoints";
 
 declare module "@tanstack/solid-table" {
   //This needs to be an interface
@@ -39,5 +39,8 @@ declare module "@tanstack/solid-table" {
      * Can be used to define mouse-overs with `aria-label` and `data-balloon-pos`
      */
     headerMeta?: JSX.HTMLAttributes;
+
+    /** extra classes for the header */
+    headerClass?: string;
   }
 }

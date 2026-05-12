@@ -4,9 +4,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import { Theme } from "../../../src/ts/components/core/Theme";
 import { ThemeWithName } from "../../../src/ts/constants/themes";
-import * as Notifications from "../../../src/ts/elements/notifications";
-import * as Loader from "../../../src/ts/signals/loader-bar";
-import * as ThemeSignal from "../../../src/ts/signals/theme";
+import * as Loader from "../../../src/ts/states/loader-bar";
+import * as Notifications from "../../../src/ts/states/notifications";
+import * as ThemeSignal from "../../../src/ts/states/theme";
 
 vi.mock("../../../src/ts/constants/themes", () => ({
   themes: {
@@ -24,7 +24,7 @@ describe("Theme component", () => {
   const themeSignalMock = vi.spyOn(ThemeSignal, "getTheme");
   const loaderShowMock = vi.spyOn(Loader, "showLoaderBar");
   const loaderHideMock = vi.spyOn(Loader, "hideLoaderBar");
-  const notificationAddMock = vi.spyOn(Notifications, "add");
+  const notificationAddMock = vi.spyOn(Notifications, "showNoticeNotification");
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -85,13 +85,13 @@ describe("Theme component", () => {
   it("removes CSS when theme has no CSS", async () => {
     themeSignalMock.mockImplementation(() => ({ name: "light" }) as any);
     const { css } = renderComponent();
-    expect(css.getAttribute("href")).toBe("");
+    expect(css).not.toBeInTheDocument();
   });
 
   it("removes CSS when theme is custom", async () => {
     themeSignalMock.mockImplementation(() => ({ name: "custom" }) as any);
     const { css } = renderComponent();
-    expect(css.getAttribute("href")).toBe("");
+    expect(css).not.toBeInTheDocument();
   });
 
   it("handles CSS load error", () => {
@@ -99,7 +99,7 @@ describe("Theme component", () => {
     expect(loaderShowMock).toHaveBeenCalledOnce();
     fireEvent.error(css);
     expect(loaderHideMock).toHaveBeenCalledOnce();
-    expect(notificationAddMock).toHaveBeenCalledWith("Failed to load theme", 0);
+    expect(notificationAddMock).toHaveBeenCalledWith("Failed to load theme");
   });
 
   it("renders favicon", () => {

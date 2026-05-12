@@ -6,13 +6,12 @@ import { format } from "date-fns/format";
 import { z } from "zod";
 
 import Ape from "../ape";
-import * as AuthEvent from "../observables/auth-event";
-import { addBanner } from "../stores/banners";
+import { authEvent } from "../events/auth";
+import { addBanner } from "../states/banners";
+import { addPsa } from "../states/psas";
 import { secondsToString } from "../utils/date-and-time";
+import { isDevEnvironment } from "../utils/env";
 import { LocalStorageWithSchema } from "../utils/local-storage-with-schema";
-import { isDevEnvironment } from "../utils/misc";
-
-import * as Alerts from "./alerts";
 
 const confirmedPSAs = new LocalStorageWithSchema({
   key: "confirmedPSAs",
@@ -178,7 +177,7 @@ export async function show(): Promise<void> {
       );
     }
 
-    Alerts.addPSA(psa.message, psa.level ?? -1);
+    addPsa(psa.message, psa.level ?? -1);
 
     if (localmemory.includes(psa._id) && !(psa.sticky ?? false)) {
       return;
@@ -205,7 +204,7 @@ export async function show(): Promise<void> {
   });
 }
 
-AuthEvent.subscribe((event) => {
+authEvent.subscribe((event) => {
   if (event.type === "authStateChanged") {
     void show();
   }
